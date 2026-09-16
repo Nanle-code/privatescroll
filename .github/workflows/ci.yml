@@ -20,6 +20,11 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # Pinned, not "latest": compactc 0.34.0 implements language_version
+          # 0.26.0 and rejects this project's contracts, which pin `pragma
+          # language_version 0.23` (see contracts/src/*.compact) — 0.31.1 is
+          # the newest version confirmed compatible with that pragma.
+          "$HOME/.local/bin/compact" update 0.31.1
 
       - name: Install dependencies
         run: npm install

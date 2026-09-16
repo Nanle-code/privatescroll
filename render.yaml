@@ -19,6 +19,11 @@ services:
     buildCommand: |
       curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
       export PATH="$HOME/.local/bin:$PATH"
+      # Pinned, not latest: compactc 0.34.0+ implements a newer language
+      # spec than this project's contracts declare (`pragma
+      # language_version 0.23` — see contracts/src/*.compact) and refuses
+      # to compile them. 0.31.1 is the newest version confirmed compatible.
+      compact update 0.31.1
       npm install
       npm run contracts:compile
     startCommand: npm run relayer:start
