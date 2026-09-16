@@ -1,15 +1,24 @@
 // PrivateScroll — local dev relayer.
 //
-// The production path is a browser wallet (Lace) submitting real proofs
-// to a live Midnight node + indexer + proof server. That stack needs
-// Docker, which is not available in this environment (see README in this
-// directory / the project's Phase C notes). Rather than ship unverifiable
-// browser-wallet wiring, this relayer exposes the same real
-// LocalPrivateScrollClient — running the actual compiled Compact circuits
-// via @midnight-ntwrk/compact-runtime — over a small local HTTP API, so
-// front/services/midnight.ts makes real contract calls end-to-end today.
-// It is a local dev relayer, not a mock: every request executes real
-// compiled circuit logic and real asserts.
+// The production path is a browser wallet (Lace/1AM) submitting real
+// proofs to a live Midnight node + indexer + proof server. That stack
+// needs Docker, which is not available in this environment. Rather than
+// ship unverifiable browser-wallet wiring, this relayer exposes the same
+// real LocalPrivateScrollClient — running the actual compiled Compact
+// circuits via @midnight-ntwrk/compact-runtime — over a small local HTTP
+// API, so front/services/midnight.ts makes real contract calls
+// end-to-end today. It is a local dev relayer, not a mock: every request
+// executes real compiled circuit logic and real asserts.
+//
+// Stateless by design: every caller supplies their own secretKey (hex) in
+// the request body. This relayer never generates or persists anyone's
+// secret to disk — it only ever holds one in memory for the duration of
+// a single request, to run the requested circuit. The secret is
+// generated and durably held only in the caller's own browser (see
+// front/services/midnight.ts's getUserSecretKey). This matters for a
+// shared, publicly-reachable deployment of this relayer: it never
+// becomes a store of every user's private key, and no caller can act as
+// another identity without that identity's actual secret.
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -18,18 +27,21 @@ import express from "express";
 import cors from "cors";
 import { AccessLevel, LocalPrivateScrollClient } from "./localContractClient.js";
 import { createPrivateScrollPrivateState } from "./witnesses.js";
-import { identitySecretPath, loadOrCreateSecretKey } from "./identity.js";
 import { fromHex, toHex } from "./hex.js";
 import { pureCircuits } from "./managed/authorship/contract/index.js";
 
 const DATA_DIR = process.env.PRIVATESCROLL_DATA_DIR ?? ".privatescroll";
-const PORT = Number(process.env.PRIVATESCROLL_RELAYER_PORT ?? 8788);
+// PORT is what most hosts (Render included) actually set; the older
+// PRIVATESCROLL_RELAYER_PORT stays as a local-dev-only override.
+const PORT = Number(process.env.PORT ?? process.env.PRIVATESCROLL_RELAYER_PORT ?? 8788);
 
-const client = LocalPrivateScrollClient.open(DATA_DIR);
+const client = await LocalPrivateScrollClient.open(DATA_DIR);
 
-const privateStateFor = (identity: string, writeCount = 0n) => {
-  const secretKey = loadOrCreateSecretKey(identitySecretPath(DATA_DIR, identity));
-  return createPrivateScrollPrivateState(secretKey, writeCount);
+const privateStateFrom = (secretKeyHex: string, writeCount = 0n) => {
+  if (typeof secretKeyHex !== "string" || !secretKeyHex) {
+    throw new Error("Missing secretKey");
+  }
+  return createPrivateScrollPrivateState(fromHex(secretKeyHex), writeCount);
 };
 
 const accessLevelFromString = (value: string): AccessLevel => {
@@ -74,19 +86,25 @@ const handle = (fn: (req: express.Request) => Promise<unknown>) => async (
 
 app.get("/status", (_req, res) => res.json({ ok: true }));
 
+// Pure computation — no ledger access, nothing stored. Lets a caller learn
+// their own (or verify someone else's claimed) public key hash from a
+// secretKey, without that secret ever being written anywhere.
 app.post(
-  "/identity/:identity",
+  "/authorship/key-hash",
   handle(async (req) => {
-    const secretKey = loadOrCreateSecretKey(identitySecretPath(DATA_DIR, req.params.identity));
-    return { authorKeyHash: toHex(pureCircuits.authorKeyHash(secretKey)) };
+    const { secretKey } = req.body;
+    if (typeof secretKey !== "string" || !secretKey) {
+      throw new Error("Missing secretKey");
+    }
+    return { authorKeyHash: toHex(pureCircuits.authorKeyHash(fromHex(secretKey))) };
   }),
 );
 
 app.post(
   "/authorship/prove",
   handle(async (req) => {
-    const { identity, documentHash } = req.body;
-    const author = await client.proveAuthorship(privateStateFor(identity), fromHex(documentHash));
+    const { secretKey, documentHash } = req.body;
+    const author = await client.proveAuthorship(privateStateFrom(secretKey), fromHex(documentHash));
     return { author: toHex(author) };
   }),
 );
@@ -94,9 +112,9 @@ app.post(
 app.post(
   "/authorship/prove-work-history",
   handle(async (req) => {
-    const { identity, documentHash, modifiedHash, numPastes, writeCount } = req.body;
+    const { secretKey, documentHash, modifiedHash, numPastes, writeCount } = req.body;
     const passed = await client.proveWorkHistory(
-      privateStateFor(identity, BigInt(writeCount)),
+      privateStateFrom(secretKey, BigInt(writeCount)),
       fromHex(documentHash),
       fromHex(modifiedHash),
       BigInt(numPastes),
@@ -108,8 +126,8 @@ app.post(
 app.post(
   "/authorship/prove-anonymous",
   handle(async (req) => {
-    const { identity, documentHash } = req.body;
-    const match = await client.proveAuthorshipAnonymous(privateStateFor(identity), fromHex(documentHash));
+    const { secretKey, documentHash } = req.body;
+    const match = await client.proveAuthorshipAnonymous(privateStateFrom(secretKey), fromHex(documentHash));
     return { match };
   }),
 );
@@ -117,8 +135,8 @@ app.post(
 app.post(
   "/authorship/prove-with-identity",
   handle(async (req) => {
-    const { identity, documentHash } = req.body;
-    const author = await client.proveAuthorshipWithIdentity(privateStateFor(identity), fromHex(documentHash));
+    const { secretKey, documentHash } = req.body;
+    const author = await client.proveAuthorshipWithIdentity(privateStateFrom(secretKey), fromHex(documentHash));
     return { author: toHex(author) };
   }),
 );
@@ -126,9 +144,9 @@ app.post(
 app.post(
   "/authorship/share/authorize",
   handle(async (req) => {
-    const { identity, documentHash, recipientKeyHash, accessLevel, nonce } = req.body;
+    const { secretKey, documentHash, recipientKeyHash, accessLevel, nonce } = req.body;
     const shareId = await client.authorizeDocumentShare(
-      privateStateFor(identity),
+      privateStateFrom(secretKey),
       fromHex(documentHash),
       fromHex(recipientKeyHash),
       accessLevelFromString(accessLevel),
@@ -141,8 +159,8 @@ app.post(
 app.post(
   "/authorship/share/revoke",
   handle(async (req) => {
-    const { identity, shareId } = req.body;
-    await client.revokeDocumentShare(privateStateFor(identity), fromHex(shareId));
+    const { secretKey, shareId } = req.body;
+    await client.revokeDocumentShare(privateStateFrom(secretKey), fromHex(shareId));
     return { revoked: true };
   }),
 );
@@ -150,8 +168,8 @@ app.post(
 app.post(
   "/authorship/share/verify",
   handle(async (req) => {
-    const { identity, shareId } = req.body;
-    const accessLevel = await client.verifyReadPermission(privateStateFor(identity), fromHex(shareId));
+    const { secretKey, shareId } = req.body;
+    const accessLevel = await client.verifyReadPermission(privateStateFrom(secretKey), fromHex(shareId));
     return { accessLevel: accessLevelToString(accessLevel) };
   }),
 );
@@ -159,9 +177,9 @@ app.post(
 app.post(
   "/change/prove",
   handle(async (req) => {
-    const { identity, originalHash, modifiedHash, salt } = req.body;
+    const { secretKey, originalHash, modifiedHash, salt } = req.body;
     const commitment = await client.proveDocumentChange(
-      privateStateFor(identity),
+      privateStateFrom(secretKey),
       fromHex(originalHash),
       fromHex(modifiedHash),
       fromHex(salt),
@@ -173,9 +191,9 @@ app.post(
 app.post(
   "/change/prove-by-author",
   handle(async (req) => {
-    const { identity, originalHash, modifiedHash, salt } = req.body;
+    const { secretKey, originalHash, modifiedHash, salt } = req.body;
     const commitment = await client.proveChangeByAuthor(
-      privateStateFor(identity),
+      privateStateFrom(secretKey),
       fromHex(originalHash),
       fromHex(modifiedHash),
       fromHex(salt),

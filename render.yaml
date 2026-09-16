@@ -1,0 +1,47 @@
+# Render Blueprint — deploys the relayer and backend as two persistent Node
+# web services from this repo. See DEPLOY.md for the full walkthrough
+# (MongoDB Atlas setup, connecting this blueprint, Vercel frontend).
+#
+# Both services run `npm install` from the repo root (this is an npm
+# workspaces monorepo — contracts/back/front all share one lockfile), then
+# a workspace-scoped build/start command.
+#
+# MONGODB_URI is shared by both services on purpose: the backend uses it
+# for document/share storage, and the relayer uses the same cluster (in a
+# separate `relayer_ledger_state` collection) to persist its ledger state,
+# since Render's free web-service tier has no persistent disk — see
+# contracts/ledgerStore.ts for why that matters.
+services:
+  - type: web
+    name: privatescroll-relayer
+    env: node
+    plan: free
+    buildCommand: |
+      curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+      export PATH="$HOME/.local/bin:$PATH"
+      npm install
+      npm run contracts:compile
+    startCommand: npm run relayer:start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: privatescroll
+
+  - type: web
+    name: privatescroll-backend
+    env: node
+    plan: free
+    buildCommand: npm install && npm run back:build
+    startCommand: npm run back:start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: privatescroll
+      - key: MIDNIGHT_RELAYER_URL
+        sync: false

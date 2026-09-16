@@ -9,6 +9,7 @@
     "compile": "npm run compact:authorship && npm run compact:change",
     "compile:fast": "compact compile --skip-zk src/authorship.compact managed/authorship && compact compile --skip-zk src/document_change.compact managed/document_change",
     "relayer": "tsx watch relayer.ts",
+    "start": "tsx relayer.ts",
     "verify": "tsx verify.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -16,7 +17,8 @@
     "@midnight-ntwrk/compact-runtime": "0.16.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "mongodb": "^6.5.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

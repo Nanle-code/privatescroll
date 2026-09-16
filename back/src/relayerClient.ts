@@ -75,30 +75,15 @@ export async function getOnChainShare(shareId: string): Promise<OnChainShareGran
   return get(`/ledger/authorship/share/${shareId}`);
 }
 
-export type ShareAccessCheck =
-  | { status: "granted"; accessLevel: "read" | "read_verify" | "full" }
-  | { status: "denied"; reason: string }
-  | { status: "unavailable"; reason: string };
-
-/**
- * Server-to-server recipient-access check, authoritative over MongoDB's
- * cached share status. Distinguishes a genuine on-chain denial (not the
- * recipient, or revoked) from the relayer simply being unreachable, so
- * callers don't mistake an outage for mass share revocation.
- */
-export async function verifySharedAccessOnChain(shareId: string, userAddress: string): Promise<ShareAccessCheck> {
-  try {
-    const result = await post("/authorship/share/verify", { identity: userAddress, shareId });
-    return { status: "granted", accessLevel: result.accessLevel };
-  } catch (err) {
-    if (err instanceof RelayerUnavailableError) {
-      return { status: "unavailable", reason: err.message };
-    }
-    return { status: "denied", reason: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-export async function getAuthorKeyHash(userAddress: string): Promise<string> {
-  const result = await post(`/identity/${encodeURIComponent(userAddress)}`, {});
-  return result.authorKeyHash;
-}
+// There is no getAuthorKeyHash or verifySharedAccessOnChain here anymore.
+// Both required the relayer to resolve a caller's secret key server-side —
+// exactly the pattern removed so a shared, publicly-reachable deployment of
+// this relayer never becomes a store of every user's private key (see
+// contracts/relayer.ts). Recipient-access verification (proving you hold
+// the secret behind a share's recipientKeyHash) now happens directly in
+// the caller's own browser against the relayer — see
+// front/services/midnight.ts's verifySharedAccess — which is the only
+// place that legitimately holds the secret needed to run that circuit.
+// This backend still authoritatively checks the parts that don't require
+// anyone's secret: share existence and revocation status, both plain
+// public ledger reads (see getOnChainShare above).

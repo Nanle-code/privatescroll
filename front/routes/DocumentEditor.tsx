@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useParams } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   AccessLevel,
   DocumentRecord,
@@ -33,22 +34,34 @@ export default function DocumentEditor() {
 
   useEffect(() => {
     if (!documentId || !userAddress) return
+    // Guards against a stale resolution overwriting newer state — e.g.
+    // React 18 StrictMode's dev-mode double-invoke of effects, or this
+    // effect re-running if documentId/userAddress ever legitimately
+    // changes while a previous fetch is still in flight. Without this, a
+    // delayed second resolution could clobber content the user already
+    // started typing with whatever the (possibly stale) fetch returned.
+    let cancelled = false
     setLoading(true)
     getDocument(documentId, userAddress).then(async (doc) => {
+      if (cancelled) return
       if (doc) {
         setRecord(doc)
         setDocumentHash(doc.documentHash ?? null)
         if (doc.content) {
           const key = getOrCreateDocumentKey(documentId)
           try {
-            setContent(await aesDecryptMessage(doc.content, key))
+            const decrypted = await aesDecryptMessage(doc.content, key)
+            if (!cancelled) setContent(decrypted)
           } catch {
-            setContent('')
+            if (!cancelled) setContent('')
           }
         }
       }
-      setLoading(false)
+      if (!cancelled) setLoading(false)
     })
+    return () => {
+      cancelled = true
+    }
   }, [documentId, userAddress])
 
   const handleSave = async () => {
@@ -58,7 +71,7 @@ export default function DocumentEditor() {
       let hash = documentHash
       if (!hash) {
         hash = await sha256Hex(content)
-        const registered = await proveAuthorship(userAddress, hash)
+        const registered = await proveAuthorship(hash)
         if (!registered) return
         setDocumentHash(hash)
       } else {
@@ -73,7 +86,7 @@ export default function DocumentEditor() {
         if (previousModifiedHash) {
           const newModifiedHash = await sha256Hex(content)
           if (previousModifiedHash !== newModifiedHash) {
-            await proveChangeByAuthor(previousModifiedHash, newModifiedHash, userAddress)
+            await proveChangeByAuthor(previousModifiedHash, newModifiedHash)
           }
         }
       }
@@ -100,12 +113,21 @@ export default function DocumentEditor() {
   if (!record) return <p>Document not found.</p>
 
   return (
-    <div className="editor">
+    <motion.div className="editor" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: 'easeOut' }}>
       <div className="page-header">
         <h1>{record.documentTitle}</h1>
-        <span className={record.blockchain_verified ? 'badge badge-live' : 'badge badge-dev'}>
-          {record.blockchain_verified ? 'On-chain verified' : 'Not yet saved'}
-        </span>
+        <AnimatePresence mode="wait">
+          <motion.span
+            key={record.blockchain_verified ? 'verified' : 'unverified'}
+            className={record.blockchain_verified ? 'badge badge-live' : 'badge badge-dev'}
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.85 }}
+            transition={{ duration: 0.2 }}
+          >
+            {record.blockchain_verified ? 'On-chain verified' : 'Not yet saved'}
+          </motion.span>
+        </AnimatePresence>
       </div>
 
       <textarea
@@ -123,28 +145,40 @@ export default function DocumentEditor() {
       />
 
       <div className="editor-actions">
-        <button onClick={handleSave} disabled={saving || !content}>
+        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={handleSave} disabled={saving || !content}>
           {saving ? 'Saving…' : 'Save'}
-        </button>
+        </motion.button>
         <span className="hint">
           writes: {writeCount.current}, pastes: {pasteCount.current}
         </span>
       </div>
 
-      {record.midnight_proofs?.length > 0 && (
-        <details>
-          <summary>{record.midnight_proofs.length} on-chain proof(s) recorded</summary>
-          <ul>
-            {record.midnight_proofs.map((proof, index) => (
-              <li key={index}>
-                <code>{proof.modifiedHash.slice(0, 16)}…</code> at {new Date(proof.verifiedAt).toLocaleString()}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <AnimatePresence>
+        {record.midnight_proofs?.length > 0 && (
+          <motion.details
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <summary>{record.midnight_proofs.length} on-chain proof(s) recorded</summary>
+            <ul>
+              {record.midnight_proofs.map((proof, index) => (
+                <li key={index}>
+                  <code>{proof.modifiedHash.slice(0, 16)}…</code> at {new Date(proof.verifiedAt).toLocaleString()}
+                </li>
+              ))}
+            </ul>
+          </motion.details>
+        )}
+      </AnimatePresence>
 
-      <section className="share-panel">
+      <motion.section
+        className="share-panel"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+      >
         <h2>Share</h2>
         {!documentHash && <p>Save the document at least once before sharing it.</p>}
         {documentHash && (
@@ -159,17 +193,25 @@ export default function DocumentEditor() {
               <option value="read_verify">Read + verify</option>
               <option value="full">Full</option>
             </select>
-            <button onClick={handleShare} disabled={sharing || !recipientSharingCode}>
+            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={handleShare} disabled={sharing || !recipientSharingCode}>
               {sharing ? 'Sharing…' : 'Share'}
-            </button>
+            </motion.button>
           </>
         )}
-        {shareResult && (
-          <p className="share-result">
-            Share created — send this id to the recipient: <code>{shareResult}</code>
-          </p>
-        )}
-      </section>
-    </div>
+        <AnimatePresence>
+          {shareResult && (
+            <motion.p
+              className="share-result"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+            >
+              Share created — send this id to the recipient: <code>{shareResult}</code>
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </motion.section>
+    </motion.div>
   )
 }

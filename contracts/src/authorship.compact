@@ -84,10 +84,19 @@ export circuit proveAuthorship(documentHash: Bytes<32>): Bytes<32> {
 // being saved — rather than on the author, so the same document can be
 // proven again on every subsequent save as its content changes, instead
 // of succeeding only once ever.
+//
+// Also asserts the caller is documentHash's registered author. This
+// wasn't checked here originally — a verifier had to separately re-derive
+// the caller's key hash to confirm it, which only works if something
+// holds the caller's secret to re-derive from. Checking it in-circuit
+// instead means a verifier only needs this call to have succeeded at all;
+// nothing else needs to know or store anyone's secret.
 export circuit proveWorkHistory(documentHash: Bytes<32>, modifiedHash: Bytes<32>, numPastes: Uint<32>): Boolean {
   const disclosedDocumentHash = disclose(documentHash);
   const disclosedModifiedHash = disclose(modifiedHash);
   const disclosedProofId = disclose(workProofId(disclosedDocumentHash, disclosedModifiedHash));
+  assert(documentAuthor.member(disclosedDocumentHash), "document has no registered author");
+  assert(documentAuthor.lookup(disclosedDocumentHash) == disclose(callerKeyHash()), "only the registered author may record work-history for this document");
   assert(!workProofs.member(disclosedProofId), "work-history proof already recorded for this document version");
   assert(disclose(localWriteCount() > numPastes), "write count does not exceed paste count");
 

@@ -12,7 +12,7 @@ export function useMidnightUser() {
     const address = await getUserAddress()
     setUserAddress(address)
     if (address) {
-      setSharingCode(await getMySharingCode(address))
+      setSharingCode(await getMySharingCode())
     }
   }, [])
 

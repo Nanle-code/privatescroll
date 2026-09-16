@@ -1,7 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useOutletContext } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { createDocument, DocumentSummary, listDocuments } from '../services/midnight'
 import type { AppOutletContext } from '../App'
+
+const listVariants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.06 } },
+}
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 10 },
+  show: { opacity: 1, y: 0 },
+}
 
 export default function Home() {
   const { userAddress } = useOutletContext<AppOutletContext>()
@@ -32,27 +43,33 @@ export default function Home() {
   }
 
   return (
-    <div>
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: 'easeOut' }}>
       <div className="page-header">
         <h1>My Documents</h1>
-        <button onClick={handleCreate} disabled={creating}>
+        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={handleCreate} disabled={creating}>
           {creating ? 'Creating…' : 'New Document'}
-        </button>
+        </motion.button>
       </div>
 
       {loading && <p>Loading…</p>}
-      {!loading && documents.length === 0 && <p>No documents yet — create your first one.</p>}
+      {!loading && documents.length === 0 && (
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+          No documents yet — create your first one.
+        </motion.p>
+      )}
 
-      <ul className="document-list">
-        {documents.map((doc) => (
-          <li key={doc._id}>
-            <Link to={`/document/${doc._id}`}>{doc.documentTitle}</Link>
-            <span className={doc.blockchain_verified ? 'badge badge-live' : 'badge badge-dev'}>
-              {doc.blockchain_verified ? 'On-chain verified' : 'Not yet saved'}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
+      <motion.ul className="document-list" variants={listVariants} initial="hidden" animate="show">
+        <AnimatePresence>
+          {documents.map((doc) => (
+            <motion.li key={doc._id} layout variants={itemVariants} exit={{ opacity: 0, y: -10 }}>
+              <Link to={`/document/${doc._id}`}>{doc.documentTitle}</Link>
+              <span className={doc.blockchain_verified ? 'badge badge-live' : 'badge badge-dev'}>
+                {doc.blockchain_verified ? 'On-chain verified' : 'Not yet saved'}
+              </span>
+            </motion.li>
+          ))}
+        </AnimatePresence>
+      </motion.ul>
+    </motion.div>
   )
 }

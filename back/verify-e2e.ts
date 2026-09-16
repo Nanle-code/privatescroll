@@ -69,10 +69,17 @@ async function main() {
   }
 
   console.log("\n-- setup --");
-  const alice = await relayerPost("/identity/alice", {});
-  const bob = await relayerPost("/identity/bob", {});
-  expect("alice identity ready", alice.ok === true);
-  expect("bob identity ready", bob.ok === true);
+  // Secrets generated here exactly as a browser would (see
+  // front/services/midnight.ts's getUserSecretKey) — the relayer never
+  // generates or persists these; "alice"/"bob" below are only backend/
+  // MongoDB bookkeeping labels (userAddress), entirely separate from the
+  // on-chain identity these secrets establish.
+  const aliceSecret = randomHex32();
+  const bobSecret = randomHex32();
+  const alice = await relayerPost("/authorship/key-hash", { secretKey: aliceSecret });
+  const bob = await relayerPost("/authorship/key-hash", { secretKey: bobSecret });
+  expect("alice key hash derived", alice.ok === true);
+  expect("bob key hash derived", bob.ok === true);
   const bobKeyHash: string = bob.result.authorKeyHash;
 
   console.log("\n-- create + append without any on-chain proof --");
@@ -97,7 +104,7 @@ async function main() {
   );
 
   console.log("\n-- prove authorship, still no work-history proof --");
-  const proveAuthorship = await relayerPost("/authorship/prove", { identity: "alice", documentHash });
+  const proveAuthorship = await relayerPost("/authorship/prove", { secretKey: aliceSecret, documentHash });
   expect("proveAuthorship succeeds on-chain", proveAuthorship.ok === true, proveAuthorship.error);
 
   const appendWithoutWorkProof = await backendPost("/document/append", {
@@ -115,7 +122,7 @@ async function main() {
 
   console.log("\n-- first real append --");
   const work1 = await relayerPost("/authorship/prove-work-history", {
-    identity: "alice",
+    secretKey: aliceSecret,
     documentHash,
     modifiedHash: documentHash,
     numPastes: 0,
@@ -138,7 +145,7 @@ async function main() {
   const secondContent = `privatescroll second save ${Date.now()}`;
   const modifiedHash2 = sha256Hex(secondContent);
   const work2 = await relayerPost("/authorship/prove-work-history", {
-    identity: "alice",
+    secretKey: aliceSecret,
     documentHash,
     modifiedHash: modifiedHash2,
     numPastes: 1,
@@ -198,7 +205,7 @@ async function main() {
 
   const nonce = randomHex32();
   const onChainShare = await relayerPost("/authorship/share/authorize", {
-    identity: "alice",
+    secretKey: aliceSecret,
     documentHash,
     recipientKeyHash: bobKeyHash,
     accessLevel: "read_verify",
@@ -217,25 +224,41 @@ async function main() {
   });
   expect("backend records the on-chain-verified share", shareAuthorize.status === 200, shareAuthorize.body);
 
-  const getShareAsRecipient = await backendGet(`/document/share/${shareId}?userAddress=bob`);
-  expect("recipient can fetch the shared document", getShareAsRecipient.status === 200, getShareAsRecipient.body);
+  // The backend's /document/share/:shareId no longer takes an identity —
+  // it can't verify who's asking without holding anyone's secret (see
+  // back/src/router.ts). It authoritatively serves ciphertext to any
+  // caller who has the (unguessable) shareId, as long as the on-chain
+  // grant exists and isn't revoked. The actual "are you really the
+  // recipient" check is a real ZK proof run directly against the relayer
+  // with the caller's own secret — exactly what the frontend does before
+  // ever calling this backend route (see verifySharedAccess in
+  // front/services/midnight.ts) — so that's what's exercised below instead
+  // of a backend-side identity check.
+  const getShareRaw = await backendGet(`/document/share/${shareId}`);
+  expect("the backend serves the (still encrypted) shared document to any caller with the shareId", getShareRaw.status === 200, getShareRaw.body);
   expect(
     "returned access level matches what was granted",
-    getShareAsRecipient.body.message?.accessLevel === "read_verify",
+    getShareRaw.body.message?.accessLevel === "read_verify",
   );
 
-  const getShareAsWrongUser = await backendGet(`/document/share/${shareId}?userAddress=alice`);
-  expect("the sender (not the recipient) cannot read via the share link", getShareAsWrongUser.status === 403, getShareAsWrongUser.body);
+  const verifyAsRecipient = await relayerPost("/authorship/share/verify", { secretKey: bobSecret, shareId });
+  expect("the real recipient's own secret proves read access", verifyAsRecipient.ok === true && verifyAsRecipient.result?.accessLevel === "read_verify", verifyAsRecipient);
 
-  const revoke = await relayerPost("/authorship/share/revoke", { identity: "alice", shareId });
+  const verifyAsSender = await relayerPost("/authorship/share/verify", { secretKey: aliceSecret, shareId });
+  expect("the sender's own secret (not the recipient's) fails the same check", verifyAsSender.ok === false, verifyAsSender);
+
+  const revoke = await relayerPost("/authorship/share/revoke", { secretKey: aliceSecret, shareId });
   expect("on-chain revoke succeeds", revoke.ok === true, revoke.error);
 
-  const getShareAfterRevoke = await backendGet(`/document/share/${shareId}?userAddress=bob`);
+  const getShareAfterRevoke = await backendGet(`/document/share/${shareId}`);
   expect(
     "backend rejects access after on-chain revocation, even though its own cached record still says active",
     getShareAfterRevoke.status === 403,
     getShareAfterRevoke.body,
   );
+
+  const verifyAfterRevoke = await relayerPost("/authorship/share/verify", { secretKey: bobSecret, shareId });
+  expect("the relayer itself also rejects the recipient's proof after revocation", verifyAfterRevoke.ok === false, verifyAfterRevoke);
 
   console.log(`\n${passCount} passed, ${failCount} failed`);
   await new Promise((resolve) => server.close(resolve));

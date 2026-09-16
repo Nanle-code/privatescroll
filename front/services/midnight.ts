@@ -185,6 +185,29 @@ export async function getUserAddress(): Promise<string | null> {
   return getOrCreateDevIdentity()
 }
 
+const SECRET_KEY_STORAGE = 'privatescroll:secret-key'
+
+/**
+ * The caller's actual circuit witness secret (userSecretKey in
+ * contracts/src/authorship.compact) — generated once per browser with a
+ * CSPRNG and kept only in this browser's localStorage. Every relayer call
+ * below sends it fresh, for that one request, to run a specific circuit;
+ * the relayer (contracts/relayer.ts) never writes it to disk or keeps it
+ * past that single request. This is deliberately independent of
+ * getUserAddress() (the wallet's shielded address, or a dev-identity
+ * label) — that value is only ever used for backend/MongoDB bookkeeping
+ * now, never sent to the relayer, since a real wallet address doesn't
+ * deterministically map to a Compact witness secret.
+ */
+export function getUserSecretKey(): string {
+  let key = localStorage.getItem(SECRET_KEY_STORAGE)
+  if (!key) {
+    key = randomHex32()
+    localStorage.setItem(SECRET_KEY_STORAGE, key)
+  }
+  return key
+}
+
 // --- relayer client (real, verified — see contracts/verify.ts) ------------
 
 async function relayerRequest(path: string, method: 'GET' | 'POST', body?: unknown): Promise<any> {
@@ -200,10 +223,10 @@ async function relayerRequest(path: string, method: 'GET' | 'POST', body?: unkno
   return data.result
 }
 
-/** Registers (if needed) and returns the pseudonymous author key hash for an identity. */
-export async function getAuthorKeyHash(userAddress: string): Promise<string | null> {
+/** Returns the pseudonymous author key hash derived from this browser's own secret key. */
+export async function getAuthorKeyHash(): Promise<string | null> {
   try {
-    const { authorKeyHash } = await relayerRequest(`/identity/${encodeURIComponent(userAddress)}`, 'POST', {})
+    const { authorKeyHash } = await relayerRequest('/authorship/key-hash', 'POST', { secretKey: getUserSecretKey() })
     return authorKeyHash
   } catch (err) {
     console.error(err)
@@ -223,8 +246,8 @@ interface SharingCode {
  * specifically). One string instead of two, so there's only one thing to
  * paste.
  */
-export async function getMySharingCode(userAddress: string): Promise<string | null> {
-  const keyHash = await getAuthorKeyHash(userAddress)
+export async function getMySharingCode(): Promise<string | null> {
+  const keyHash = await getAuthorKeyHash()
   if (!keyHash) return null
   const encryptionPublicKey = await getEncryptionPublicKey()
   return btoa(JSON.stringify({ keyHash, encryptionPublicKey } satisfies SharingCode))
@@ -248,11 +271,10 @@ function parseSharingCode(code: string): SharingCode {
  * disconnected "document" under a new hash.
  */
 export async function proveAuthorship(
-  userAddress: string,
   documentHash: string,
 ): Promise<{ documentHash: string; author: string } | null> {
   try {
-    const { author } = await relayerRequest('/authorship/prove', 'POST', { identity: userAddress, documentHash })
+    const { author } = await relayerRequest('/authorship/prove', 'POST', { secretKey: getUserSecretKey(), documentHash })
     success('Prove authorship')
     return { documentHash, author }
   } catch (err) {
@@ -274,11 +296,10 @@ export async function proveWorkHistory(
   modifiedHash: string,
   numWrites: number,
   numPastes: number,
-  userAddress: string,
 ): Promise<boolean> {
   try {
     const { passed } = await relayerRequest('/authorship/prove-work-history', 'POST', {
-      identity: userAddress,
+      secretKey: getUserSecretKey(),
       documentHash,
       modifiedHash,
       numPastes,
@@ -300,16 +321,21 @@ export async function proveWorkHistory(
  */
 export async function proveAuthorshipSelective(
   documentHash: string,
-  userAddress: string,
   revealIdentity = false,
 ): Promise<{ match: boolean } | { author: string } | null> {
   try {
     if (revealIdentity) {
-      const { author } = await relayerRequest('/authorship/prove-with-identity', 'POST', { identity: userAddress, documentHash })
+      const { author } = await relayerRequest('/authorship/prove-with-identity', 'POST', {
+        secretKey: getUserSecretKey(),
+        documentHash,
+      })
       success('Prove authorship (identity disclosed)')
       return { author }
     }
-    const { match } = await relayerRequest('/authorship/prove-anonymous', 'POST', { identity: userAddress, documentHash })
+    const { match } = await relayerRequest('/authorship/prove-anonymous', 'POST', {
+      secretKey: getUserSecretKey(),
+      documentHash,
+    })
     success('Prove authorship (anonymous)')
     return { match }
   } catch (err) {
@@ -328,14 +354,13 @@ export async function proveAuthorshipSelective(
 export async function proveDocumentChange(
   originalContent: string,
   modifiedContent: string,
-  userAddress: string,
 ): Promise<{ commitment: string; originalHash: string; modifiedHash: string } | null> {
   try {
     const originalHash = await sha256Hex(originalContent)
     const modifiedHash = await sha256Hex(modifiedContent)
     const salt = randomHex32()
     const { commitment } = await relayerRequest('/change/prove', 'POST', {
-      identity: userAddress,
+      secretKey: getUserSecretKey(),
       originalHash,
       modifiedHash,
       salt,
@@ -360,12 +385,11 @@ export async function proveDocumentChange(
 export async function proveChangeByAuthor(
   originalHash: string,
   modifiedHash: string,
-  userAddress: string,
 ): Promise<{ commitment: string } | null> {
   try {
     const salt = randomHex32()
     const { commitment } = await relayerRequest('/change/prove-by-author', 'POST', {
-      identity: userAddress,
+      secretKey: getUserSecretKey(),
       originalHash,
       modifiedHash,
       salt,
@@ -386,14 +410,13 @@ export async function proveChangeByAuthor(
  * recover it and actually read the content.
  *
  * recipientSharingCode must come from the recipient themselves — e.g. they
- * call getMySharingCode(await getUserAddress()) and share the result with
- * the sender out-of-band — never looked up by address here. An
- * address-keyed lookup would silently mint a fresh, unrelated identity for
- * any address the relayer hasn't seen before (POST /identity/:id creates
- * on first use), which would let this "succeed" while sharing with a
- * phantom identity that has nothing to do with the real recipient.
- * Enforced on-chain regardless: the circuit rejects this unless
- * userAddress is documentHash's registered author (see authorship.compact).
+ * call getMySharingCode() and share the result with the sender out-of-band
+ * — never looked up by address here. There's no address-keyed lookup to
+ * fall back to: the relayer no longer maps addresses to identities at all,
+ * so the only way to name a recipient is the key hash they themselves
+ * published in their sharing code. Enforced on-chain regardless: the
+ * circuit rejects this unless the caller is documentHash's registered
+ * author (see authorship.compact).
  */
 export async function shareDocument(
   documentId: string,
@@ -406,7 +429,7 @@ export async function shareDocument(
   try {
     const { keyHash: recipientKeyHash, encryptionPublicKey: recipientPublicKey } = parseSharingCode(recipientSharingCode)
     const { shareId } = await relayerRequest('/authorship/share/authorize', 'POST', {
-      identity: userAddress,
+      secretKey: getUserSecretKey(),
       documentHash,
       recipientKeyHash,
       accessLevel,
@@ -441,30 +464,36 @@ export async function shareDocument(
 }
 
 /**
- * Recipient side of shareDocument: proves userAddress holds the key the
- * share was granted to, without revealing it, and that the grant is still
- * active. Returns the granted access level, or null if the share doesn't
- * exist, is revoked, or userAddress isn't the recipient.
+ * Recipient side of shareDocument: proves this browser holds the secret key
+ * the share was granted to, without revealing it, and that the grant is
+ * still active. Returns the granted access level, or null if the share
+ * doesn't exist, is revoked, or this browser isn't the recipient. This is
+ * the real, ZK-backed access check for shared documents — see
+ * getSharedDocument below, which calls this before ever asking the backend
+ * for the document, since the backend has no way to run this check itself
+ * (it never holds anyone's secret key).
  */
-export async function verifySharedAccess(shareId: string, userAddress: string): Promise<AccessLevel | null> {
+export async function verifySharedAccess(shareId: string): Promise<AccessLevel | null> {
   try {
-    const { accessLevel } = await relayerRequest('/authorship/share/verify', 'POST', { identity: userAddress, shareId })
+    const { accessLevel } = await relayerRequest('/authorship/share/verify', 'POST', {
+      secretKey: getUserSecretKey(),
+      shareId,
+    })
     return accessLevel as AccessLevel
   } catch (err) {
     console.error(err)
-    error('Verify shared access', err)
     return null
   }
 }
 
 /**
  * Sender side: revokes a previously authorized share. Enforced on-chain:
- * the circuit rejects this unless userAddress is the share's original
+ * the circuit rejects this unless the caller is the share's original
  * sender.
  */
-export async function revokeShare(shareId: string, userAddress: string): Promise<boolean> {
+export async function revokeShare(shareId: string): Promise<boolean> {
   try {
-    await relayerRequest('/authorship/share/revoke', 'POST', { identity: userAddress, shareId })
+    await relayerRequest('/authorship/share/revoke', 'POST', { secretKey: getUserSecretKey(), shareId })
     success('Revoke share')
     return true
   } catch (err) {
@@ -554,10 +583,23 @@ export interface SharedDocumentResult {
   senderEncryptionPublicKey?: string
 }
 
-export async function getSharedDocument(shareId: string, userAddress: string): Promise<SharedDocumentResult | null> {
+/**
+ * Loads a shared document, gated on a real ZK proof of recipient access run
+ * right here in the browser (verifySharedAccess) — not on anything the
+ * backend reports, since the backend can't run that check itself (see
+ * back/src/router.ts's /document/share/:shareId). Only once that proof
+ * succeeds does this even ask the backend for the (still encrypted)
+ * content.
+ */
+export async function getSharedDocument(shareId: string): Promise<SharedDocumentResult | null> {
   try {
-    const response = await client.get(`/document/share/${shareId}?userAddress=${encodeURIComponent(userAddress)}`)
-    return response.message
+    const accessLevel = await verifySharedAccess(shareId)
+    if (!accessLevel) {
+      error('Load shared document', new Error('Access denied — not the recipient, or the share was revoked'))
+      return null
+    }
+    const response = await client.get(`/document/share/${shareId}`)
+    return { ...response.message, accessLevel }
   } catch (err) {
     console.error(err)
     error('Load shared document', err)
@@ -604,7 +646,7 @@ export async function appendDocument(
 ): Promise<DocumentRecord | null> {
   try {
     const modifiedHash = await sha256Hex(content)
-    const passed = await proveWorkHistory(documentHash, modifiedHash, numWrites, numPastes, userAddress)
+    const passed = await proveWorkHistory(documentHash, modifiedHash, numWrites, numPastes)
     if (!passed) {
       throw new Error('Work-history proof failed — write count did not exceed paste count')
     }

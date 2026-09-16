@@ -20,6 +20,7 @@ It's built on [Midnight Network](https://midnight.network): a Layer-1 blockchain
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
+- [Deploying it live](DEPLOY.md)
 - [Verifying it actually works](#verifying-it-actually-works)
 - [Built for the Midnight Network ecosystem](#built-for-the-midnight-network-ecosystem)
 - [License](#license)
@@ -41,6 +42,7 @@ Every item below has been exercised end-to-end against real compiled Compact cir
 | **End-to-end encrypted sharing** | The document's AES key is wrapped with ECDH specifically for one recipient's public key; only their matching private key (generated locally, non-extractable) can recover it. |
 | **Real wallet integration** | Connects to any Midnight DApp Connector-compatible wallet (1AM, Lace) via the official `@midnight-ntwrk/dapp-connector-api`, using the actual shielded address as identity. |
 | **Works without a wallet too** | A local dev-identity fallback keeps every proof/save/share flow fully testable with zero setup. |
+| **Deployable without trusting the relayer** | The relayer is stateless by design — every circuit call carries the caller's secret key for that one request only; it's never generated or persisted server-side, so a shared, publicly-reachable deployment never becomes a store of everyone's private keys. |
 
 ## What's honestly not solved yet
 
@@ -100,6 +102,8 @@ flowchart TD
 
 The backend never trusts a client-reported "proof passed" flag — every write that matters (authorship, work-history, sharing) is independently re-checked against the relayer's ledger state before anything is persisted.
 
+The relayer itself holds no secrets: every `prove*` call above carries the caller's own secret key in that single request, used only to run the requested circuit and then discarded. Nothing about a caller's identity is generated or written to disk server-side. This is also why recipient-access verification for shared documents happens directly between the browser and the relayer (see the share-flow diagram below) rather than through the backend — the backend can authoritatively check whether a share exists and hasn't been revoked (both public ledger state), but proving *who* the caller is requires the secret only their own browser holds.
+
 ### Selective disclosure over one identity
 
 ```mermaid
@@ -149,11 +153,13 @@ sequenceDiagram
     R-->>Alice: shareId
     Alice->>Alice: wrap AES key for Bob's ECDH public key
     Alice->>B: POST /document/share/authorize
-    B->>R: confirm the share matches on-chain grant
+    B->>R: confirm the share matches on-chain grant (public ledger read, no secret needed)
     B-->>Alice: recorded
+    Bob->>R: verifyReadPermission(shareId), using Bob's own secret key
+    Note over R: fails unless Bob genuinely holds the granted key — the backend never sees this secret
+    R-->>Bob: access granted
     Bob->>B: GET /document/share/:shareId
-    B->>R: verifyReadPermission(shareId) as Bob
-    R-->>B: access granted
+    Note over B: only checks the grant still exists and isn't revoked (public ledger state)
     B-->>Bob: ciphertext + access level
     Bob->>Bob: unwrap key, decrypt -> plaintext
 ```
@@ -234,6 +240,8 @@ npm run front:dev           # frontend on :5173
 ```
 
 Then open **http://localhost:5173**. No wallet needed to try it — a local dev identity is used automatically; click "Connect wallet" if you have 1AM or Lace installed.
+
+**Want a live link instead of running it locally?** See [DEPLOY.md](DEPLOY.md) — frontend on Vercel, backend + relayer on Render, MongoDB Atlas for storage, all on free tiers.
 
 ## Verifying it actually works
 

@@ -14,8 +14,6 @@
 // a transaction requires the separate proof-server pipeline, which also
 // needs Docker. That step has not been exercised in this environment.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   ContractState,
   createCircuitContext,
@@ -26,6 +24,7 @@ import {
   type CircuitContext,
   type ContractAddress,
 } from "@midnight-ntwrk/compact-runtime";
+import { createLedgerStore, type LedgerStore } from "./ledgerStore.js";
 import {
   Contract as AuthorshipContract,
   ledger as authorshipLedger,
@@ -50,42 +49,36 @@ export type { ShareGrant, AuthorshipLedger, DocumentChangeLedger };
 const GENESIS_SEED = "0".repeat(64);
 
 /**
- * One shared, disk-persisted deployment of a single compiled contract.
+ * One shared, durably-persisted deployment of a single compiled contract.
  * Every identity that calls it shares the same ledger; only the witness
  * values (the secret key/write count resolved by `PrivateScrollPrivateState`)
- * differ per call.
+ * differ per call. Backed by a LedgerStore (see ledgerStore.ts) — a local
+ * file for dev, or MongoDB when deployed somewhere without a persistent
+ * disk.
  */
 class LocalDeployment {
-  private readonly ledgerPath: string;
-  private readonly addressPath: string;
-  readonly address: ContractAddress;
+  private constructor(
+    private readonly store: LedgerStore,
+    readonly address: ContractAddress,
+  ) {}
 
-  private constructor(dataDir: string, address: ContractAddress) {
-    this.ledgerPath = join(dataDir, "ledger.bin");
-    this.addressPath = join(dataDir, "address.hex");
-    this.address = address;
-  }
-
-  static open(dataDir: string, initialState: () => ContractState): LocalDeployment {
-    mkdirSync(dataDir, { recursive: true });
-    const ledgerPath = join(dataDir, "ledger.bin");
-    const addressPath = join(dataDir, "address.hex");
-    if (!existsSync(ledgerPath)) {
+  static async open(store: LedgerStore, initialState: () => ContractState): Promise<LocalDeployment> {
+    if (!(await store.hasState())) {
       const address = sampleContractAddress();
-      writeFileSync(ledgerPath, initialState().serialize());
-      writeFileSync(addressPath, address);
-      return new LocalDeployment(dataDir, address);
+      await store.saveState(initialState().serialize());
+      await store.saveAddress(address);
+      return new LocalDeployment(store, address);
     }
-    const address = readFileSync(addressPath, "utf8") as ContractAddress;
-    return new LocalDeployment(dataDir, address);
+    const address = (await store.loadAddress()) as ContractAddress;
+    return new LocalDeployment(store, address);
   }
 
-  loadState(): ContractState {
-    return ContractState.deserialize(new Uint8Array(readFileSync(this.ledgerPath)));
+  async loadState(): Promise<ContractState> {
+    return ContractState.deserialize(await this.store.loadState());
   }
 
-  saveState(state: ContractState): void {
-    writeFileSync(this.ledgerPath, state.serialize());
+  async saveState(state: ContractState): Promise<void> {
+    await this.store.saveState(state.serialize());
   }
 
   freshContext<PS>(state: ContractState, privateState: PS): CircuitContext<PS> {
@@ -111,37 +104,47 @@ export class LocalPrivateScrollClient {
   private readonly authorshipDeployment: LocalDeployment;
   private readonly documentChangeDeployment: LocalDeployment;
 
-  private constructor(dataDir: string) {
-    this.authorship = new AuthorshipContract<PrivateScrollPrivateState>(authorshipWitnesses);
-    this.documentChange = new DocumentChangeContract<PrivateScrollPrivateState>(documentChangeWitnesses);
-
-    this.authorshipDeployment = LocalDeployment.open(join(dataDir, "authorship"), () => {
-      const { currentContractState } = this.authorship.initialState(
-        createConstructorContext({ secretKey: new Uint8Array(32), writeCount: 0n }, GENESIS_SEED),
-      );
-      return currentContractState;
-    });
-
-    this.documentChangeDeployment = LocalDeployment.open(join(dataDir, "document_change"), () => {
-      const { currentContractState } = this.documentChange.initialState(
-        createConstructorContext({ secretKey: new Uint8Array(32), writeCount: 0n }, GENESIS_SEED),
-      );
-      return currentContractState;
-    });
+  private constructor(
+    authorship: AuthorshipContract<PrivateScrollPrivateState>,
+    documentChange: DocumentChangeContract<PrivateScrollPrivateState>,
+    authorshipDeployment: LocalDeployment,
+    documentChangeDeployment: LocalDeployment,
+  ) {
+    this.authorship = authorship;
+    this.documentChange = documentChange;
+    this.authorshipDeployment = authorshipDeployment;
+    this.documentChangeDeployment = documentChangeDeployment;
   }
 
-  /** Opens (or, on first use, deploys) the shared local deployments backing `dataDir`. */
-  static open(dataDir: string): LocalPrivateScrollClient {
-    return new LocalPrivateScrollClient(dataDir);
+  /** Opens (or, on first use, deploys) the shared deployments backing `dataDir`. */
+  static async open(dataDir: string): Promise<LocalPrivateScrollClient> {
+    const authorship = new AuthorshipContract<PrivateScrollPrivateState>(authorshipWitnesses);
+    const documentChange = new DocumentChangeContract<PrivateScrollPrivateState>(documentChangeWitnesses);
+
+    const authorshipDeployment = await LocalDeployment.open(await createLedgerStore("authorship", dataDir), () => {
+      const { currentContractState } = authorship.initialState(
+        createConstructorContext({ secretKey: new Uint8Array(32), writeCount: 0n }, GENESIS_SEED),
+      );
+      return currentContractState;
+    });
+
+    const documentChangeDeployment = await LocalDeployment.open(await createLedgerStore("document_change", dataDir), () => {
+      const { currentContractState } = documentChange.initialState(
+        createConstructorContext({ secretKey: new Uint8Array(32), writeCount: 0n }, GENESIS_SEED),
+      );
+      return currentContractState;
+    });
+
+    return new LocalPrivateScrollClient(authorship, documentChange, authorshipDeployment, documentChangeDeployment);
   }
 
   // --- authorship ----------------------------------------------------
 
   async proveAuthorship(privateState: PrivateScrollPrivateState, documentHash: Uint8Array): Promise<Uint8Array> {
-    const state = this.authorshipDeployment.loadState();
+    const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);
     const result = await this.authorship.impureCircuits.proveAuthorship(context, documentHash);
-    this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
+    await this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
     return result.result;
   }
 
@@ -151,22 +154,22 @@ export class LocalPrivateScrollClient {
     modifiedHash: Uint8Array,
     numPastes: bigint,
   ): Promise<boolean> {
-    const state = this.authorshipDeployment.loadState();
+    const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);
     const result = await this.authorship.impureCircuits.proveWorkHistory(context, documentHash, modifiedHash, numPastes);
-    this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
+    await this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
     return result.result;
   }
 
   async proveAuthorshipAnonymous(privateState: PrivateScrollPrivateState, documentHash: Uint8Array): Promise<boolean> {
-    const state = this.authorshipDeployment.loadState();
+    const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);
     const result = await this.authorship.impureCircuits.proveAuthorshipAnonymous(context, documentHash);
     return result.result;
   }
 
   async proveAuthorshipWithIdentity(privateState: PrivateScrollPrivateState, documentHash: Uint8Array): Promise<Uint8Array> {
-    const state = this.authorshipDeployment.loadState();
+    const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);
     const result = await this.authorship.impureCircuits.proveAuthorshipWithIdentity(context, documentHash);
     return result.result;
@@ -179,7 +182,7 @@ export class LocalPrivateScrollClient {
     accessLevel: AccessLevel,
     nonce: Uint8Array,
   ): Promise<Uint8Array> {
-    const state = this.authorshipDeployment.loadState();
+    const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);
     const result = await this.authorship.impureCircuits.authorizeDocumentShare(
       context,
@@ -188,26 +191,26 @@ export class LocalPrivateScrollClient {
       accessLevel,
       nonce,
     );
-    this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
+    await this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
     return result.result;
   }
 
   async revokeDocumentShare(privateState: PrivateScrollPrivateState, shareId: Uint8Array): Promise<void> {
-    const state = this.authorshipDeployment.loadState();
+    const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);
     const result = await this.authorship.impureCircuits.revokeDocumentShare(context, shareId);
-    this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
+    await this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
   }
 
   async verifyReadPermission(privateState: PrivateScrollPrivateState, shareId: Uint8Array): Promise<AccessLevel> {
-    const state = this.authorshipDeployment.loadState();
+    const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);
     const result = await this.authorship.impureCircuits.verifyReadPermission(context, shareId);
     return result.result;
   }
 
   async readAuthorshipLedger(): Promise<AuthorshipLedger> {
-    return authorshipLedger(this.authorshipDeployment.loadState().data);
+    return authorshipLedger((await this.authorshipDeployment.loadState()).data);
   }
 
   // --- document change -------------------------------------------------
@@ -218,10 +221,10 @@ export class LocalPrivateScrollClient {
     modifiedHash: Uint8Array,
     salt: Uint8Array,
   ): Promise<Uint8Array> {
-    const state = this.documentChangeDeployment.loadState();
+    const state = await this.documentChangeDeployment.loadState();
     const context = this.documentChangeDeployment.freshContext(state, privateState);
     const result = await this.documentChange.impureCircuits.proveDocumentChange(context, originalHash, modifiedHash, salt);
-    this.documentChangeDeployment.saveState(this.documentChangeDeployment.updateState(state, result.context));
+    await this.documentChangeDeployment.saveState(this.documentChangeDeployment.updateState(state, result.context));
     return result.result;
   }
 
@@ -231,14 +234,14 @@ export class LocalPrivateScrollClient {
     modifiedHash: Uint8Array,
     salt: Uint8Array,
   ): Promise<Uint8Array> {
-    const state = this.documentChangeDeployment.loadState();
+    const state = await this.documentChangeDeployment.loadState();
     const context = this.documentChangeDeployment.freshContext(state, privateState);
     const result = await this.documentChange.impureCircuits.proveChangeByAuthor(context, originalHash, modifiedHash, salt);
-    this.documentChangeDeployment.saveState(this.documentChangeDeployment.updateState(state, result.context));
+    await this.documentChangeDeployment.saveState(this.documentChangeDeployment.updateState(state, result.context));
     return result.result;
   }
 
   async readDocumentChangeLedger(): Promise<DocumentChangeLedger> {
-    return documentChangeLedger(this.documentChangeDeployment.loadState().data);
+    return documentChangeLedger((await this.documentChangeDeployment.loadState()).data);
   }
 }

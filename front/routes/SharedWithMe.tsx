@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { decryptSharedContent, SharedDocumentResult, getSharedDocument } from '../services/midnight'
 import type { AppOutletContext } from '../App'
 
@@ -38,14 +39,14 @@ export default function SharedWithMe() {
     }
     setLoadError(null)
     setLoading(true)
-    const loaded = await getSharedDocument(shareId, userAddress)
+    const loaded = await getSharedDocument(shareId)
     setResult(loaded)
     setPlaintext(loaded ? await decryptSharedContent(loaded) : null)
     setLoading(false)
   }
 
   return (
-    <div>
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: 'easeOut' }}>
       <h1>Shared With Me</h1>
       <p>
         There's no "list my shares" view yet — paste a share id someone sent you (the sender gets it back from the
@@ -53,36 +54,63 @@ export default function SharedWithMe() {
       </p>
       <div className="share-load">
         <input placeholder="Share id" value={shareId} onChange={(e) => setShareId(e.target.value)} />
-        <button onClick={handleLoad} disabled={loading || !shareId}>
+        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={handleLoad} disabled={loading || !shareId}>
           {loading ? 'Loading…' : 'Load'}
-        </button>
+        </motion.button>
       </div>
 
-      {loadError && <p className="warning">{loadError}</p>}
+      <AnimatePresence>
+        {loadError && (
+          <motion.p
+            className="warning"
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            {loadError}
+          </motion.p>
+        )}
+      </AnimatePresence>
 
-      {result && (
-        <div className="shared-document">
-          <h2>{result.document.documentTitle}</h2>
-          <p>
-            Access level: <strong>{result.accessLevel}</strong>
-          </p>
-          {plaintext !== null ? (
-            <>
-              <p className="success-note">Decrypted with your own key — only you can do this.</p>
-              <pre className="plaintext">{plaintext}</pre>
-            </>
-          ) : (
-            <>
-              <p className="warning">
-                Couldn't decrypt this in your browser — either this share predates key-wrapping support, or this
-                browser genuinely isn't the intended recipient. Showing ciphertext rather than pretending to
-                decrypt it.
-              </p>
-              <pre className="ciphertext">{result.document.content}</pre>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+      <AnimatePresence>
+        {result && (
+          <motion.div
+            className="shared-document"
+            initial={{ opacity: 0, y: 14, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+          >
+            <h2>{result.document.documentTitle}</h2>
+            <p>
+              Access level: <strong>{result.accessLevel}</strong>
+            </p>
+            {plaintext !== null ? (
+              <>
+                <motion.p
+                  className="success-note"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.15 }}
+                >
+                  Decrypted with your own key — only you can do this.
+                </motion.p>
+                <pre className="plaintext">{plaintext}</pre>
+              </>
+            ) : (
+              <>
+                <p className="warning">
+                  Couldn't decrypt this in your browser — either this share predates key-wrapping support, or this
+                  browser genuinely isn't the intended recipient. Showing ciphertext rather than pretending to
+                  decrypt it.
+                </p>
+                <pre className="ciphertext">{result.document.content}</pre>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }

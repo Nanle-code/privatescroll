@@ -11,11 +11,9 @@ import {
 } from "./controller";
 import {
   RelayerUnavailableError,
-  getAuthorKeyHash,
   getOnChainShare,
   getRegisteredAuthor,
   isWorkProofRecorded,
-  verifySharedAccessOnChain,
 } from "./relayerClient";
 
 const router = express.Router();
@@ -93,14 +91,14 @@ router.post("/document/append", async (req, res) => {
     if (!existing.documentHash) {
       // First save for this document: the client should have already
       // called proveAuthorship. Confirm that actually happened on-chain
-      // rather than trusting the request.
-      const { registered, author } = await getRegisteredAuthor(documentHash);
+      // rather than trusting the request. There's no further "does the
+      // on-chain author match this caller" check here — the relayer only
+      // ever runs proveAuthorship with the caller's own secret (see
+      // contracts/relayer.ts), so a registered author already implies it
+      // was this caller who registered it.
+      const { registered } = await getRegisteredAuthor(documentHash);
       if (!registered) {
         return res.status(400).json({ message: "Document authorship is not registered on-chain — call proveAuthorship first" });
-      }
-      const expectedAuthor = await getAuthorKeyHash(userAddress);
-      if (author !== expectedAuthor) {
-        return res.status(403).json({ message: "On-chain author does not match the requesting user" });
       }
     } else if (existing.documentHash !== documentHash) {
       return res.status(400).json({ message: "documentHash does not match the document's registered identifier" });
@@ -138,13 +136,16 @@ router.post("/document/share/authorize", async (req, res) => {
       return res.status(404).json({ message: "Document not found for this sender" });
     }
 
+    // authorizeDocumentShare's circuit already asserted the caller who
+    // created this on-chain share is documentHash's registered author
+    // (see contracts/src/authorship.compact) — there's nothing further to
+    // check about the sender's identity here, only that this request
+    // describes the same grant that actually exists on-chain.
     const onChainShare = await getOnChainShare(shareId);
     if (!onChainShare.exists) {
       return res.status(400).json({ message: "Share not found on-chain — call authorizeDocumentShare first" });
     }
-    const expectedSenderKeyHash = await getAuthorKeyHash(senderAddress);
     if (
-      onChainShare.senderKeyHash !== expectedSenderKeyHash ||
       onChainShare.documentHash !== documentHash ||
       onChainShare.recipientKeyHash !== recipientKeyHash ||
       onChainShare.accessLevel !== accessLevel
@@ -168,28 +169,34 @@ router.post("/document/share/authorize", async (req, res) => {
   }
 });
 
+// Deliberately takes no userAddress/identity: verifying that the caller is
+// really the granted recipient requires proving possession of their secret
+// key, which only their own browser holds (see verifySharedAccess in
+// front/services/midnight.ts — it calls the relayer directly, before this
+// route, and the frontend only proceeds here once that real ZK check
+// passes). What this route CAN and does check authoritatively, without
+// needing anyone's secret, is the on-chain grant's public state: that it
+// exists and hasn't been revoked (see getOnChainShare above). shareId
+// itself is an unguessable 32-byte hash the sender must deliver to the
+// recipient out of band, and the returned content is still ECDH-wrapped to
+// the real recipient's key, so a caller who isn't the recipient can fetch
+// ciphertext but not read it.
 router.get("/document/share/:shareId", async (req, res) => {
   try {
     const { shareId } = req.params;
-    const { userAddress } = req.query as { userAddress?: string };
-    if (!userAddress) {
-      return res.status(400).json({ message: "Missing userAddress query parameter" });
-    }
 
     const share = await getDocumentShareByShareId(shareId);
     if (!share || share.status !== "active") {
       return res.status(404).json({ message: "Shared document not found" });
     }
 
-    const access = await verifySharedAccessOnChain(shareId, userAddress);
-    if (access.status === "unavailable") {
-      return res.status(502).json({ message: "Could not verify access — the Midnight relayer is unavailable. Try again shortly." });
+    const onChainShare = await getOnChainShare(shareId);
+    if (!onChainShare.exists) {
+      return res.status(404).json({ message: "Share not found on-chain" });
     }
-    if (access.status === "denied") {
-      if (access.reason.includes("revoked")) {
-        await markDocumentShareRevoked(shareId);
-      }
-      return res.status(403).json({ message: "Access denied — not the recipient, or the share was revoked on-chain" });
+    if (onChainShare.revoked) {
+      await markDocumentShareRevoked(shareId);
+      return res.status(403).json({ message: "Share has been revoked on-chain" });
     }
 
     const document = await getDocumentById(share.documentId.toString());
@@ -200,7 +207,7 @@ router.get("/document/share/:shareId", async (req, res) => {
     return res.json({
       message: {
         document,
-        accessLevel: access.accessLevel,
+        accessLevel: onChainShare.accessLevel,
         wrappedKey: share.wrappedKey,
         senderEncryptionPublicKey: share.senderEncryptionPublicKey,
       },

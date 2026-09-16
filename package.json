@@ -2,7 +2,7 @@
   "name": "privatescroll",
   "private": true,
   "version": "0.1.0",
-  "description": "zkPaper migrated from Noir/Ethereum to Midnight Network Compact contracts.",
+  "description": "A zero-knowledge document editor on Midnight Network — prove authorship, genuine effort, and read permission with real Compact circuits, without trusting a server operator.",
   "workspaces": [
     "contracts",
     "back",
@@ -16,8 +16,11 @@
     "contracts:compile:fast": "npm run compile:fast --workspace contracts",
     "contracts:verify": "npm run verify --workspace contracts",
     "relayer": "npm run relayer --workspace contracts",
+    "relayer:start": "npm run start --workspace contracts",
     "dev-mongo": "node dev-mongo.mjs",
     "back:dev": "npm run dev --workspace back",
+    "back:start": "npm run start --workspace back",
+    "back:build": "npm run build --workspace back",
     "back:verify": "npm run verify --workspace back",
     "front:dev": "npm run dev --workspace front",
     "typecheck": "npm run typecheck --workspace contracts && npm run typecheck --workspace back && npm run typecheck --workspace front"
