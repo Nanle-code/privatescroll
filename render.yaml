@@ -1,6 +1,5 @@
 # Render Blueprint — deploys the relayer and backend as two persistent Node
-# web services from this repo. See DEPLOY.md for the full walkthrough
-# (MongoDB Atlas setup, connecting this blueprint, Vercel frontend).
+# web services from this repo.
 #
 # Both services run `npm install` from the repo root (this is an npm
 # workspaces monorepo — contracts/back/front all share one lockfile), then

@@ -20,7 +20,6 @@ It's built on [Midnight Network](https://midnight.network): a Layer-1 blockchain
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
-- [Deploying it live](DEPLOY.md)
 - [Verifying it actually works](#verifying-it-actually-works)
 - [Built for the Midnight Network ecosystem](#built-for-the-midnight-network-ecosystem)
 - [License](#license)
@@ -227,6 +226,8 @@ privatescroll/
 
 ## Getting started
 
+This is the full, fully-functional path — real compiled circuits, a real database, and a real frontend all running together — and the one to use for a live demo.
+
 ```bash
 # from privatescroll/
 npm install
@@ -240,8 +241,6 @@ npm run front:dev           # frontend on :5173
 ```
 
 Then open **http://localhost:5173**. No wallet needed to try it — a local dev identity is used automatically; click "Connect wallet" if you have 1AM or Lace installed.
-
-**Want a live link instead of running it locally?** See [DEPLOY.md](DEPLOY.md) — frontend on Vercel, backend + relayer on Render, MongoDB Atlas for storage, all on free tiers.
 
 ## Verifying it actually works
 
