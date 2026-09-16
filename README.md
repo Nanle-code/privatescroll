@@ -6,10 +6,13 @@ PrivateScroll lets you write documents that only you can read, prove you authore
 
 It's built on [Midnight Network](https://midnight.network): a Layer-1 blockchain purpose-built for programmable data protection. Every claim PrivateScroll makes about a document — who wrote it, whether a save was genuine, who's allowed to read it — is backed by a real zero-knowledge circuit written in **Compact**, Midnight's own smart contract language, not just application-level trust.
 
+📖 **New here?** [What is PrivateScroll?](docs/WHAT_IS_PRIVATESCROLL.md) explains all of this in plain language — no blockchain background needed. This README is the technical deep dive underneath it.
+
 ---
 
 ## Table of contents
 
+- [What is PrivateScroll? (plain-language guide)](docs/WHAT_IS_PRIVATESCROLL.md)
 - [What it can do today](#what-it-can-do-today)
 - [What's honestly not solved yet](#whats-honestly-not-solved-yet)
 - [Vision & roadmap](#vision--roadmap)
