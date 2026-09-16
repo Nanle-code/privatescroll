@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Compact toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck (contracts, backend, frontend)
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build --workspace front
+
+      - name: Compile Compact contracts (real proving keys)
+        run: npm run contracts:compile
+
+      - name: Run circuit + backend verification suites
+        run: |
+          npm run relayer &
+          RELAYER_PID=$!
+          timeout 30 bash -c 'until curl -sf http://localhost:8788/status >/dev/null 2>&1; do sleep 1; done'
+          npm run contracts:verify
+          npm run back:verify
+          kill "$RELAYER_PID"

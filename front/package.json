@@ -12,6 +12,7 @@
   "dependencies": {
     "@midnight-ntwrk/dapp-connector-api": "4.0.1",
     "crypto-js": "^4.2.0",
+    "framer-motion": "^13.3.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.23.0",

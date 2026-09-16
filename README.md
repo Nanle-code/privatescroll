@@ -1,5 +1,7 @@
 # PrivateScroll
 
+[![CI](https://github.com/Nanle-code/privatescroll/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanle-code/privatescroll/actions/workflows/ci.yml)
+
 PrivateScroll lets you write documents that only you can read, prove you authored them without revealing who you are (unless you choose to), prove a save was genuine authored work rather than a paste-dump — without revealing how much you wrote — and share a document with exactly one other person, cryptographically, with no server ever seeing the plaintext.
 
 It's built on [Midnight Network](https://midnight.network): a Layer-1 blockchain purpose-built for programmable data protection. Every claim PrivateScroll makes about a document — who wrote it, whether a save was genuine, who's allowed to read it — is backed by a real zero-knowledge circuit written in **Compact**, Midnight's own smart contract language, not just application-level trust.
@@ -10,12 +12,16 @@ It's built on [Midnight Network](https://midnight.network): a Layer-1 blockchain
 
 - [What it can do today](#what-it-can-do-today)
 - [What's honestly not solved yet](#whats-honestly-not-solved-yet)
+- [Vision & roadmap](#vision--roadmap)
 - [Architecture](#architecture)
+- [Midnight's dual-ledger model](#midnights-dual-ledger-model)
 - [How Midnight Network features are used](#how-midnight-network-features-are-used)
+- [Screenshots](#screenshots)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
 - [Verifying it actually works](#verifying-it-actually-works)
+- [Built for the Midnight Network ecosystem](#built-for-the-midnight-network-ecosystem)
 - [License](#license)
 
 ---
@@ -44,6 +50,20 @@ This project tells you what's real and what isn't, rather than papering over gap
 - **Access levels aren't differentiated in-circuit.** `Read` / `ReadVerify` / `Full` are stored and checked for existence, but nothing on-chain currently enforces what each level actually permits — that's left to application logic, which doesn't differentiate them yet either.
 - **No "list my shares" view.** Loading a shared document requires pasting the share id someone sent you.
 - **A share, once created, can't be re-keyed** if a recipient loses their local ECDH private key — there's no recovery path yet.
+
+## Vision & roadmap
+
+**Why this needs a privacy-preserving chain, not just a database.** A private document editor built on a normal server has to ask users to trust an operator not to peek, not to get subpoenaed quietly, not to get breached. PrivateScroll doesn't ask for that trust for the claims that matter most: authorship, genuine effort, and read permission are backed by circuits anyone can independently verify, not by an operator's promise.
+
+**Who it's for.** Anyone who needs to prove they wrote something — timestamped, provably not a copy-paste — without necessarily attaching their real identity to it: journalists protecting sources, researchers establishing priority on an idea, or teams that want a real audit trail without a surveillance trail. The selective-disclosure model means the same document can serve someone who wants total anonymity and someone who wants to publicly claim credit, without changing the underlying system.
+
+**Adoption path.** The pieces here are useful independently of the full editor: `authorship.compact`'s pattern (pseudonymous identity + selective disclosure) generalizes to any product that needs "prove you did X, choose whether to say who did it" — a plugin/library extraction is a natural next step once the core is battle-tested.
+
+**Realistic next steps**, roughly in the order they'd get built:
+1. Connect to a real Midnight testnet node, indexer, and proof server — proof generation currently runs through `@midnight-ntwrk/compact-runtime`'s in-process simulator for fast local iteration.
+2. Differentiate `AccessLevel` in-circuit — `Read` / `ReadVerify` / `Full` currently only differ by label, not by enforced capability.
+3. A "list my shares" view backed by an indexer query, replacing manually pasted share ids.
+4. Recipient key recovery, so losing a local ECDH keypair doesn't mean losing access to everything ever shared with you.
 
 ## Architecture
 
@@ -138,6 +158,16 @@ sequenceDiagram
     Bob->>Bob: unwrap key, decrypt -> plaintext
 ```
 
+## Midnight's dual-ledger model
+
+Every Midnight contract is split across two domains that never get confused with each other, and both of PrivateScroll's contracts lean on that split directly rather than incidentally.
+
+- **Public ledger state** — declared with `ledger` in Compact, this is Midnight's on-chain, verifiable **public transcript**: the only thing anyone, including a block producer, ever sees. In `authorship.compact` that's `documentAuthor`, `authorDocumentCount`, `workProofs`, and `shares`; in `document_change.compact` it's `latestVersion`, `changeNullifiers`, and `changeAuthor`.
+- **Private local state** — declared with `witness`, this runs off-chain on the caller's own machine and is never transmitted anywhere. `userSecretKey` and `localWriteCount` are the two witnesses in this project; the values they return live only in the **private transcript** that satisfies a circuit's constraints, never the public one.
+- **`disclose()` is the only bridge between the two.** Any value that starts private and needs to reach public ledger state has to cross through `disclose()` explicitly — the compiler statically tracks this and refuses to build if a witness-derived value leaks into the public transcript without it. This isn't a style preference: it caught a real bug during development, where `proveAuthorshipAnonymous`'s witness-derived comparison needed an explicit `disclose()` before the compiler would accept it.
+
+This split is what makes `proveWorkHistory` a genuine zero-knowledge circuit rather than a database check with extra steps: `localWriteCount` (private transcript) is compared against `numPastes` (a public argument), and only the pass/fail *result* crosses into the public ledger via `disclose()` — the actual count never does.
+
 ## How Midnight Network features are used
 
 - **Compact language** — two contracts, `authorship.compact` and `document_change.compact`, written against the real syntax in [docs.midnight.network](https://docs.midnight.network), not inferred or guessed.
@@ -147,6 +177,12 @@ sequenceDiagram
 - **Nullifier-based replay protection** — `workProofs` and `changeNullifiers` are `Set<Bytes<32>>` ledgers that make a given proof re-playable exactly once for its specific inputs, and never again.
 - **Pure circuits reused off-chain** — `workProofId` is a `pure`-inferred circuit (no ledger/witness access) called both *inside* the proving circuit and *directly by the backend* via the relayer, so the replay-check hash logic can never drift between the two.
 - **The official DApp Connector API** — `@midnight-ntwrk/dapp-connector-api`'s real `connect(networkId)` / `getShieldedAddresses()` types, not a guessed shape, so it works with any compliant wallet (1AM, Lace) without wallet-specific code.
+
+## Screenshots
+
+| My Documents | Editor — proof recorded, sharing panel | Recipient view — decrypted client-side |
+|---|---|---|
+| ![My Documents](docs/screenshots/home.png) | ![Editor](docs/screenshots/editor.png) | ![Shared With Me](docs/screenshots/shared.png) |
 
 ## Tech stack
 
@@ -206,6 +242,10 @@ npm run contracts:verify   # 25 assertions against the real compiled circuits
 npm run back:verify        # 23 assertions against a real in-memory MongoDB + the relayer
 npm run typecheck          # all three packages
 ```
+
+## Built for the Midnight Network ecosystem
+
+PrivateScroll is built entirely on [Midnight Network](https://midnight.network) — its smart contracts are written in [Compact](https://docs.midnight.network), and its wallet integration targets the official [`@midnight-ntwrk/dapp-connector-api`](https://www.npmjs.com/package/@midnight-ntwrk/dapp-connector-api). See the [docs.midnight.network](https://docs.midnight.network) for the language and platform this project is built on.
 
 ## License
 
