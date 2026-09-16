@@ -75,31 +75,31 @@ This project tells you what's real and what isn't, rather than papering over gap
 
 ```mermaid
 flowchart TD
-    subgraph Browser["Browser"]
-        UI["React UI (Vite)"]
-        WalletAPI["Wallet: 1AM / Lace<br/>(DApp Connector API)"]
-        ECDH["ECDH keypair<br/>(IndexedDB, non-extractable)"]
+    subgraph Browser
+        UI[React UI]
+        Wallet[Wallet Connector]
+        ECDH[ECDH Keypair]
     end
 
-    subgraph DevStack["Local dev stack"]
-        Relayer["Relayer<br/>(Express + compact-runtime)"]
-        Backend["Backend API<br/>(Express)"]
-        Mongo[("MongoDB")]
+    subgraph Services
+        Relayer[Relayer]
+        Backend[Backend API]
+        Mongo[(MongoDB)]
     end
 
-    subgraph Contracts["Compiled Compact contracts"]
-        Auth["authorship.compact"]
-        Change["document_change.compact"]
+    subgraph Contracts
+        Auth[authorship.compact]
+        Change[document_change.compact]
     end
 
-    UI -- "connect() / getShieldedAddresses()" --> WalletAPI
-    UI -- "wrap / unwrap document keys" --> ECDH
-    UI -- "prove* calls" --> Relayer
-    Relayer -- "executes circuits against" --> Auth
-    Relayer -- "executes circuits against" --> Change
-    UI -- "create / save / share" --> Backend
-    Backend -- "independently re-verifies every claim" --> Relayer
-    Backend -- "persists encrypted content + proof refs" --> Mongo
+    UI --> Wallet
+    UI --> ECDH
+    UI -- prove calls --> Relayer
+    Relayer --> Auth
+    Relayer --> Change
+    UI --> Backend
+    Backend -- re-verifies --> Relayer
+    Backend -- persists --> Mongo
 ```
 
 The backend never trusts a client-reported "proof passed" flag — every write that matters (authorship, work-history, sharing) is independently re-checked against the relayer's ledger state before anything is persisted.
@@ -110,10 +110,10 @@ The relayer itself holds no secrets: every `prove*` call above carries the calle
 
 ```mermaid
 flowchart LR
-    Secret["userSecretKey<br/>(witness — never leaves the browser)"] --> Hash["authorKeyHash()<br/>persistentHash, domain-separated"]
-    Hash --> Reg["proveAuthorship<br/>discloses the hash, registers the document"]
-    Hash --> Anon["proveAuthorshipAnonymous<br/>discloses ONE boolean bit only"]
-    Hash --> Ident["proveAuthorshipWithIdentity<br/>discloses the hash, opt-in"]
+    Secret[userSecretKey] --> Hash[authorKeyHash]
+    Hash -- public register --> Reg[proveAuthorship]
+    Hash -- anonymous match --> Anon[proveAuthorshipAnonymous]
+    Hash -- opt-in reveal --> Ident[proveAuthorshipWithIdentity]
 ```
 
 Three circuits, one underlying secret, three different disclosure policies chosen per use case — the point of "selective disclosure" made concrete.
@@ -123,20 +123,19 @@ Three circuits, one underlying secret, three different disclosure policies chose
 ```mermaid
 sequenceDiagram
     participant U as Browser
-    participant R as Relayer (circuits)
+    participant R as Relayer
     participant B as Backend
     participant M as MongoDB
 
-    U->>U: documentHash = sha256(content)
-    U->>R: proveAuthorship(documentHash)
-    R-->>U: author key hash (disclosed)
-    U->>R: proveWorkHistory(documentHash, modifiedHash, numPastes)
-    Note over R: numWrites stays private — only pass/fail is disclosed
-    R-->>U: pass / fail
-    U->>B: POST /document/append (ciphertext, hashes)
-    B->>R: re-verify both proofs independently
-    R-->>B: confirmed against ledger
-    B->>M: persist ciphertext + proof record
+    U->>R: prove authorship
+    R-->>U: author key hash
+    U->>R: prove work history
+    Note over R: write count stays private
+    R-->>U: pass or fail
+    U->>B: append document
+    B->>R: re-verify proofs
+    R-->>B: confirmed
+    B->>M: persist document
     B-->>U: updated document
 ```
 
@@ -149,22 +148,24 @@ sequenceDiagram
     participant R as Relayer
     participant B as Backend
 
-    Bob->>Bob: publish sharing code (key hash + ECDH public key)
-    Alice->>R: authorizeDocumentShare(documentHash, bobKeyHash, level)
-    Note over R: rejects unless Alice is the on-chain registered author
+    Bob->>Bob: publish sharing code
+    Alice->>R: authorize share
+    Note over R: rejects unless Alice is the registered author
     R-->>Alice: shareId
-    Alice->>Alice: wrap AES key for Bob's ECDH public key
-    Alice->>B: POST /document/share/authorize
-    B->>R: confirm the share matches on-chain grant (public ledger read, no secret needed)
+    Alice->>Alice: wrap key for Bob
+    Alice->>B: record share
+    B->>R: confirm on-chain grant
     B-->>Alice: recorded
-    Bob->>R: verifyReadPermission(shareId), using Bob's own secret key
-    Note over R: fails unless Bob genuinely holds the granted key — the backend never sees this secret
+    Bob->>R: verify read permission
+    Note over R: fails unless Bob holds the granted key
     R-->>Bob: access granted
-    Bob->>B: GET /document/share/:shareId
-    Note over B: only checks the grant still exists and isn't revoked (public ledger state)
-    B-->>Bob: ciphertext + access level
-    Bob->>Bob: unwrap key, decrypt -> plaintext
+    Bob->>B: request document
+    Note over B: checks grant is still active
+    B-->>Bob: ciphertext and access level
+    Bob->>Bob: decrypt
 ```
+
+The backend never needs Bob's secret to serve that last request — it only checks public ledger state (the share exists, isn't revoked). Proving Bob is the real recipient happens entirely between his browser and the relayer, using his own secret key.
 
 ## Midnight's dual-ledger model
 
