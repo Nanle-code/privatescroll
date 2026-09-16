@@ -1,0 +1,189 @@
+// PrivateScroll — authorship and sharing proofs.
+//
+// Replaces zkPaper's Noir circuits (circuits/work/src/main.nr and
+// circuits/change/src/main.nr) plus its manual, backend-trusted document
+// sharing with Compact circuits backed by one ledger. Authorship and
+// sharing are merged into a single contract (rather than kept as separate
+// files) specifically so authorizeDocumentShare can check document
+// ownership against documentAuthor in-circuit — splitting them across
+// independent contracts would mean no on-chain guarantee that only a
+// document's real author can authorize sharing it.
+//
+// Identity follows the same pattern Midnight's own reference contracts
+// use for ownership: knowledge of a secret whose domain-separated
+// persistentHash matches a value committed to public ledger state. The
+// caller's secret key never leaves the client; only its hash (and values
+// explicitly wrapped in disclose()) ever touch the chain.
+
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+export enum AccessLevel {
+  Read,
+  ReadVerify,
+  Full,
+}
+
+export struct ShareGrant {
+  senderKeyHash: Bytes<32>,
+  documentHash: Bytes<32>,
+  recipientKeyHash: Bytes<32>,
+  accessLevel: AccessLevel,
+  revoked: Boolean,
+}
+
+export ledger documentAuthor: Map<Bytes<32>, Bytes<32>>;
+// Counter, not Uint<64>: a blind increment doesn't need to read the
+// counter's current value first, unlike a manual read-then-write on a
+// plain scalar. Per Midnight's own docs, that avoids a read-dependency on
+// the field, which matters for how the ledger orders/parallelizes
+// transactions that touch it.
+export ledger authorDocumentCount: Map<Bytes<32>, Counter>;
+export ledger workProofs: Set<Bytes<32>>;
+export ledger shares: Map<Bytes<32>, ShareGrant>;
+
+witness userSecretKey(): Bytes<32>;
+witness localWriteCount(): Uint<32>;
+
+constructor() {}
+
+export circuit authorKeyHash(secretKey: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "privatescroll:author:"), secretKey]);
+}
+
+circuit callerKeyHash(): Bytes<32> {
+  return authorKeyHash(userSecretKey());
+}
+
+// Registers documentHash (a content hash computed off-chain by the
+// client) as authored by the caller. Anyone can later confirm the
+// document has a registered author (proveAuthorshipAnonymous) without
+// learning who that author is, unless the author separately discloses
+// their identity (proveAuthorshipWithIdentity).
+export circuit proveAuthorship(documentHash: Bytes<32>): Bytes<32> {
+  const disclosedHash = disclose(documentHash);
+  const author = disclose(callerKeyHash());
+  assert(!documentAuthor.member(disclosedHash), "document already has a registered author");
+  documentAuthor.insert(disclosedHash, author);
+
+  if (!authorDocumentCount.member(author)) {
+    authorDocumentCount.insert(author, default<Counter>);
+  }
+  authorDocumentCount.lookup(author).increment(1);
+
+  return author;
+}
+
+// Proves a given save of a document is genuine authored work rather than
+// a paste dump, mirroring the original work.nr circuit
+// (num_writes > num_pastes). numWrites stays private, exactly as in the
+// original Noir circuit — only numPastes is a public argument, and only
+// the pass/fail result is disclosed. The replay-protection nullifier is
+// keyed on (documentHash, modifiedHash) — the specific content state
+// being saved — rather than on the author, so the same document can be
+// proven again on every subsequent save as its content changes, instead
+// of succeeding only once ever.
+export circuit proveWorkHistory(documentHash: Bytes<32>, modifiedHash: Bytes<32>, numPastes: Uint<32>): Boolean {
+  const disclosedDocumentHash = disclose(documentHash);
+  const disclosedModifiedHash = disclose(modifiedHash);
+  const disclosedProofId = disclose(workProofId(disclosedDocumentHash, disclosedModifiedHash));
+  assert(!workProofs.member(disclosedProofId), "work-history proof already recorded for this document version");
+  assert(disclose(localWriteCount() > numPastes), "write count does not exceed paste count");
+
+  workProofs.insert(disclosedProofId);
+  return true;
+}
+
+// Pure helper exposed so a verifier (e.g. the backend) can independently
+// recompute the exact proof-id proveWorkHistory recorded, and check
+// workProofs membership for it, instead of trusting a client-reported
+// pass/fail flag.
+export circuit workProofId(documentHash: Bytes<32>, modifiedHash: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "privatescroll:work:"), documentHash, modifiedHash]);
+}
+
+// Selective disclosure: proves the caller authored documentHash WITHOUT
+// revealing their key hash to the verifier — only a boolean result is
+// returned.
+export circuit proveAuthorshipAnonymous(documentHash: Bytes<32>): Boolean {
+  const disclosedHash = disclose(documentHash);
+  if (!documentAuthor.member(disclosedHash)) {
+    return false;
+  }
+  return disclose(documentAuthor.lookup(disclosedHash) == callerKeyHash());
+}
+
+// Selective disclosure, opt-in: the author voluntarily reveals their key
+// hash by returning it, rather than it ever being written to public
+// ledger state by proveAuthorship.
+export circuit proveAuthorshipWithIdentity(documentHash: Bytes<32>): Bytes<32> {
+  const disclosedHash = disclose(documentHash);
+  assert(documentAuthor.member(disclosedHash), "document has no registered author");
+  const author = callerKeyHash();
+  assert(documentAuthor.lookup(disclosedHash) == author, "caller is not the registered author");
+  return disclose(author);
+}
+
+// Sender authorizes a recipient (identified only by their key hash) to
+// access documentHash at accessLevel. Requires the caller to be the
+// document's registered author — checked in-circuit against
+// documentAuthor, which is only possible because sharing lives in the
+// same contract/ledger as authorship. nonce derives a unique share id so
+// the same document can be (re-)shared with the same recipient more than
+// once.
+export circuit authorizeDocumentShare(
+  documentHash: Bytes<32>,
+  recipientKeyHash: Bytes<32>,
+  accessLevel: AccessLevel,
+  nonce: Bytes<32>,
+): Bytes<32> {
+  const disclosedDocumentHash = disclose(documentHash);
+  const disclosedRecipientKeyHash = disclose(recipientKeyHash);
+  const sender = disclose(callerKeyHash());
+
+  assert(documentAuthor.member(disclosedDocumentHash), "document has no registered author");
+  assert(documentAuthor.lookup(disclosedDocumentHash) == sender, "only the registered author may share this document");
+
+  const shareId = persistentHash<Vector<3, Bytes<32>>>([disclosedDocumentHash, disclosedRecipientKeyHash, nonce]);
+  const disclosedShareId = disclose(shareId);
+  assert(!shares.member(disclosedShareId), "share already exists for this document, recipient, and nonce");
+
+  const grant = ShareGrant {
+    senderKeyHash: sender,
+    documentHash: disclosedDocumentHash,
+    recipientKeyHash: disclosedRecipientKeyHash,
+    accessLevel: disclose(accessLevel),
+    revoked: false,
+  };
+  shares.insert(disclosedShareId, grant);
+  return disclosedShareId;
+}
+
+// Sender revokes a previously authorized share.
+export circuit revokeDocumentShare(shareId: Bytes<32>): [] {
+  const key = disclose(shareId);
+  assert(shares.member(key), "share does not exist");
+  const grant = shares.lookup(key);
+  assert(grant.senderKeyHash == callerKeyHash(), "only the sharing author may revoke this share");
+  const updated = ShareGrant {
+    senderKeyHash: grant.senderKeyHash,
+    documentHash: grant.documentHash,
+    recipientKeyHash: grant.recipientKeyHash,
+    accessLevel: grant.accessLevel,
+    revoked: true,
+  };
+  shares.insert(key, updated);
+}
+
+// Recipient proves they hold the secret key matching the granted
+// recipientKeyHash, without revealing that key, and that the grant is
+// still active. Returns the granted access level.
+export circuit verifyReadPermission(shareId: Bytes<32>): AccessLevel {
+  const key = disclose(shareId);
+  assert(shares.member(key), "share does not exist");
+  const grant = shares.lookup(key);
+  assert(!grant.revoked, "share has been revoked");
+  assert(grant.recipientKeyHash == callerKeyHash(), "caller does not hold the recipient key for this share");
+  return grant.accessLevel;
+}

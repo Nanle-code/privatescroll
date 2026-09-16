@@ -1,0 +1,63 @@
+// PrivateScroll — document change proofs.
+//
+// Replaces zkPaper's circuits/change/src/main.nr (a Poseidon
+// hash-commitment circuit) with a Compact circuit that binds a
+// content-hash transition to a nullifier, so the same change cannot be
+// registered twice, and optionally binds the change to the caller's
+// author key hash without revealing their secret key.
+
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+export ledger latestVersion: Map<Bytes<32>, Bytes<32>>;
+export ledger changeNullifiers: Set<Bytes<32>>;
+export ledger changeAuthor: Map<Bytes<32>, Bytes<32>>;
+
+witness userSecretKey(): Bytes<32>;
+
+constructor() {}
+
+circuit changeAuthorKeyHash(): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "privatescroll:change:"), userSecretKey()]);
+}
+
+// Proves a document changed from originalHash to modifiedHash (both
+// content hashes computed off-chain by the client) and records the new
+// version publicly, without revealing document content. salt is a
+// caller-supplied nonce disclosed only as part of the commitment, which
+// prevents hash-grinding on the public originalHash/modifiedHash pair.
+export circuit proveDocumentChange(
+  originalHash: Bytes<32>,
+  modifiedHash: Bytes<32>,
+  salt: Bytes<32>,
+): Bytes<32> {
+  assert(originalHash != modifiedHash, "modified content must differ from the original");
+
+  const commitment = persistentHash<Vector<3, Bytes<32>>>([originalHash, modifiedHash, salt]);
+  const nullifier = persistentHash<Vector<3, Bytes<32>>>([pad(32, "privatescroll:change-null:"), originalHash, modifiedHash]);
+
+  const disclosedOriginal = disclose(originalHash);
+  const disclosedModified = disclose(modifiedHash);
+  const disclosedNullifier = disclose(nullifier);
+  const disclosedCommitment = disclose(commitment);
+
+  assert(!changeNullifiers.member(disclosedNullifier), "this exact change was already proven");
+  changeNullifiers.insert(disclosedNullifier);
+  latestVersion.insert(disclosedOriginal, disclosedModified);
+
+  return disclosedCommitment;
+}
+
+// Proves a document change AND binds it to the caller's author key hash,
+// without revealing the caller's secret key.
+export circuit proveChangeByAuthor(
+  originalHash: Bytes<32>,
+  modifiedHash: Bytes<32>,
+  salt: Bytes<32>,
+): Bytes<32> {
+  const commitment = proveDocumentChange(originalHash, modifiedHash, salt);
+  const author = disclose(changeAuthorKeyHash());
+  changeAuthor.insert(commitment, author);
+  return commitment;
+}

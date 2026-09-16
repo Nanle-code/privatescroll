@@ -1,0 +1,25 @@
+{
+  "name": "privatescroll",
+  "private": true,
+  "version": "0.1.0",
+  "description": "zkPaper migrated from Noir/Ethereum to Midnight Network Compact contracts.",
+  "workspaces": [
+    "contracts",
+    "back",
+    "front"
+  ],
+  "devDependencies": {
+    "mongodb-memory-server": "^10.1.2"
+  },
+  "scripts": {
+    "contracts:compile": "npm run compile --workspace contracts",
+    "contracts:compile:fast": "npm run compile:fast --workspace contracts",
+    "contracts:verify": "npm run verify --workspace contracts",
+    "relayer": "npm run relayer --workspace contracts",
+    "dev-mongo": "node dev-mongo.mjs",
+    "back:dev": "npm run dev --workspace back",
+    "back:verify": "npm run verify --workspace back",
+    "front:dev": "npm run dev --workspace front",
+    "typecheck": "npm run typecheck --workspace contracts && npm run typecheck --workspace back && npm run typecheck --workspace front"
+  }
+}

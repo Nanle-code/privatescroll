@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.privatescroll/
+.mongodb-data/
+contracts/managed/
+back/.env
+front/.env.local
