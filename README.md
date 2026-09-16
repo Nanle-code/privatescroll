@@ -73,6 +73,11 @@ This project tells you what's real and what isn't, rather than papering over gap
 
 ### System overview
 
+![System overview: the browser talks to a wallet connector and ECDH keypair locally, sends prove calls to the relayer and document requests to the backend; the relayer executes the compiled Compact contracts, and the backend re-verifies against the relayer before persisting to MongoDB.](docs/diagrams/system-overview.svg)
+
+<details>
+<summary>Diagram source</summary>
+
 ```mermaid
 flowchart TD
     subgraph Browser
@@ -102,11 +107,18 @@ flowchart TD
     Backend -- persists --> Mongo
 ```
 
+</details>
+
 The backend never trusts a client-reported "proof passed" flag — every write that matters (authorship, work-history, sharing) is independently re-checked against the relayer's ledger state before anything is persisted.
 
 The relayer itself holds no secrets: every `prove*` call above carries the caller's own secret key in that single request, used only to run the requested circuit and then discarded. Nothing about a caller's identity is generated or written to disk server-side. This is also why recipient-access verification for shared documents happens directly between the browser and the relayer (see the share-flow diagram below) rather than through the backend — the backend can authoritatively check whether a share exists and hasn't been revoked (both public ledger state), but proving *who* the caller is requires the secret only their own browser holds.
 
 ### Selective disclosure over one identity
+
+![Selective disclosure: userSecretKey derives authorKeyHash, which feeds three circuits — proveAuthorship for a public register, proveAuthorshipAnonymous for an anonymous match, and proveAuthorshipWithIdentity for an opt-in reveal.](docs/diagrams/selective-disclosure.svg)
+
+<details>
+<summary>Diagram source</summary>
 
 ```mermaid
 flowchart LR
@@ -116,9 +128,16 @@ flowchart LR
     Hash -- opt-in reveal --> Ident[proveAuthorshipWithIdentity]
 ```
 
+</details>
+
 Three circuits, one underlying secret, three different disclosure policies chosen per use case — the point of "selective disclosure" made concrete.
 
 ### Save flow
+
+![Save flow: the browser proves authorship and work history with the relayer, then appends the document to the backend, which re-verifies both proofs with the relayer before persisting to MongoDB.](docs/diagrams/save-flow.svg)
+
+<details>
+<summary>Diagram source</summary>
 
 ```mermaid
 sequenceDiagram
@@ -139,7 +158,14 @@ sequenceDiagram
     B-->>U: updated document
 ```
 
+</details>
+
 ### Share flow
+
+![Share flow: Alice authorizes a share for Bob through the relayer and records it with the backend; Bob independently verifies read permission with the relayer using his own secret key, then requests and decrypts the document.](docs/diagrams/share-flow.svg)
+
+<details>
+<summary>Diagram source</summary>
 
 ```mermaid
 sequenceDiagram
@@ -164,6 +190,8 @@ sequenceDiagram
     B-->>Bob: ciphertext and access level
     Bob->>Bob: decrypt
 ```
+
+</details>
 
 The backend never needs Bob's secret to serve that last request — it only checks public ledger state (the share exists, isn't revoked). Proving Bob is the real recipient happens entirely between his browser and the relayer, using his own secret key.
 
