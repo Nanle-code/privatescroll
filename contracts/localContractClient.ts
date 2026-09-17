@@ -195,6 +195,26 @@ export class LocalPrivateScrollClient {
     return result.result;
   }
 
+  async authorizeSubShare(
+    privateState: PrivateScrollPrivateState,
+    existingShareId: Uint8Array,
+    recipientKeyHash: Uint8Array,
+    accessLevel: AccessLevel,
+    nonce: Uint8Array,
+  ): Promise<Uint8Array> {
+    const state = await this.authorshipDeployment.loadState();
+    const context = this.authorshipDeployment.freshContext(state, privateState);
+    const result = await this.authorship.impureCircuits.authorizeSubShare(
+      context,
+      existingShareId,
+      recipientKeyHash,
+      accessLevel,
+      nonce,
+    );
+    await this.authorshipDeployment.saveState(this.authorshipDeployment.updateState(state, result.context));
+    return result.result;
+  }
+
   async revokeDocumentShare(privateState: PrivateScrollPrivateState, shareId: Uint8Array): Promise<void> {
     const state = await this.authorshipDeployment.loadState();
     const context = this.authorshipDeployment.freshContext(state, privateState);

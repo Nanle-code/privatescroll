@@ -157,6 +157,21 @@ app.post(
 );
 
 app.post(
+  "/authorship/share/authorize-sub",
+  handle(async (req) => {
+    const { secretKey, existingShareId, recipientKeyHash, accessLevel, nonce } = req.body;
+    const shareId = await client.authorizeSubShare(
+      privateStateFrom(secretKey),
+      fromHex(existingShareId),
+      fromHex(recipientKeyHash),
+      accessLevelFromString(accessLevel),
+      fromHex(nonce),
+    );
+    return { shareId: toHex(shareId) };
+  }),
+);
+
+app.post(
   "/authorship/share/revoke",
   handle(async (req) => {
     const { secretKey, shareId } = req.body;

@@ -131,16 +131,19 @@ router.post("/document/share/authorize", async (req, res) => {
     if (!recipientKeyHash) return res.status(400).json({ message: "Missing recipientKeyHash" });
     if (!accessLevel) return res.status(400).json({ message: "Missing accessLevel" });
 
-    const document = await getDocumentByIdAndOwner(documentId, senderAddress);
-    if (!document) {
-      return res.status(404).json({ message: "Document not found for this sender" });
+    // Deliberately a plain existence lookup, not an ownership check: this
+    // route also serves sub-shares (see authorizeSubShare in
+    // authorship.compact), where senderAddress is a re-sharer the document
+    // was itself shared with, not the document's MongoDB owner. That's
+    // fine — the real authorization already happened on-chain, in-circuit
+    // (either as the registered author, or as an existing Full-access
+    // holder); this lookup only needs the document to exist so the share
+    // record can link to a real _id.
+    const document = await getDocumentById(documentId);
+    if (!document || document.documentHash !== documentHash) {
+      return res.status(404).json({ message: "Document not found" });
     }
 
-    // authorizeDocumentShare's circuit already asserted the caller who
-    // created this on-chain share is documentHash's registered author
-    // (see contracts/src/authorship.compact) — there's nothing further to
-    // check about the sender's identity here, only that this request
-    // describes the same grant that actually exists on-chain.
     const onChainShare = await getOnChainShare(shareId);
     if (!onChainShare.exists) {
       return res.status(400).json({ message: "Share not found on-chain — call authorizeDocumentShare first" });

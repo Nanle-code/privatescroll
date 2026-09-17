@@ -47,12 +47,16 @@ async function main() {
   // ever sent per-request to run a circuit.
   const aliceSecret = randomHex32();
   const bobSecret = randomHex32();
+  const carolSecret = randomHex32();
   const alice = await post("/authorship/key-hash", { secretKey: aliceSecret });
   const bob = await post("/authorship/key-hash", { secretKey: bobSecret });
+  const carol = await post("/authorship/key-hash", { secretKey: carolSecret });
   expect("alice key hash derived", alice.ok && typeof alice.result.authorKeyHash === "string");
   expect("bob key hash derived", bob.ok && typeof bob.result.authorKeyHash === "string");
+  expect("carol key hash derived", carol.ok && typeof carol.result.authorKeyHash === "string");
   const aliceKeyHash: string = alice.result.authorKeyHash;
   const bobKeyHash: string = bob.result.authorKeyHash;
+  const carolKeyHash: string = carol.result.authorKeyHash;
   expect("alice and bob have different key hashes", aliceKeyHash !== bobKeyHash);
 
   const documentHash = sha256Hex(`privatescroll-doc-${Date.now()}`);
@@ -163,6 +167,65 @@ async function main() {
 
   const verifyAfterRevoke = await post("/authorship/share/verify", { secretKey: bobSecret, shareId });
   expect("verifyReadPermission rejects after revocation", verifyAfterRevoke.ok === false, verifyAfterRevoke);
+
+  console.log("\n-- re-sharing (Full access only, enforced in-circuit) --");
+  const fullShareForBob = await post("/authorship/share/authorize", {
+    secretKey: aliceSecret,
+    documentHash,
+    recipientKeyHash: bobKeyHash,
+    accessLevel: "full",
+    nonce: randomHex32(),
+  });
+  expect("alice grants bob Full access", fullShareForBob.ok === true, fullShareForBob.error);
+  const fullShareId: string = fullShareForBob.result?.shareId;
+
+  const subShareByBob = await post("/authorship/share/authorize-sub", {
+    secretKey: bobSecret,
+    existingShareId: fullShareId,
+    recipientKeyHash: carolKeyHash,
+    accessLevel: "read",
+    nonce: randomHex32(),
+  });
+  expect("a Full-access holder can re-share to a third party", subShareByBob.ok === true, subShareByBob.error);
+  const subShareId: string = subShareByBob.result?.shareId;
+
+  const verifyCarolSubShare = await post("/authorship/share/verify", { secretKey: carolSecret, shareId: subShareId });
+  expect(
+    "the re-shared recipient can verify their own read permission",
+    verifyCarolSubShare.ok === true && verifyCarolSubShare.result?.accessLevel === "read",
+    verifyCarolSubShare,
+  );
+
+  const revokeSubShareByBob = await post("/authorship/share/revoke", { secretKey: bobSecret, shareId: subShareId });
+  expect("the re-sharer (not the original author) can revoke the sub-share they created", revokeSubShareByBob.ok === true, revokeSubShareByBob.error);
+
+  const readOnlyShareForBob = await post("/authorship/share/authorize", {
+    secretKey: aliceSecret,
+    documentHash,
+    recipientKeyHash: bobKeyHash,
+    accessLevel: "read",
+    nonce: randomHex32(),
+  });
+  expect("alice grants bob Read-only access", readOnlyShareForBob.ok === true, readOnlyShareForBob.error);
+  const readOnlyShareId: string = readOnlyShareForBob.result?.shareId;
+
+  const subShareFromReadOnly = await post("/authorship/share/authorize-sub", {
+    secretKey: bobSecret,
+    existingShareId: readOnlyShareId,
+    recipientKeyHash: carolKeyHash,
+    accessLevel: "read",
+    nonce: randomHex32(),
+  });
+  expect("a Read-only holder cannot re-share", subShareFromReadOnly.ok === false, subShareFromReadOnly);
+
+  const subShareByWrongCaller = await post("/authorship/share/authorize-sub", {
+    secretKey: carolSecret,
+    existingShareId: fullShareId,
+    recipientKeyHash: aliceKeyHash,
+    accessLevel: "read",
+    nonce: randomHex32(),
+  });
+  expect("someone who doesn't hold the existing share cannot use it to re-share", subShareByWrongCaller.ok === false, subShareByWrongCaller);
 
   console.log("\n-- document change --");
   const originalHash = sha256Hex(`privatescroll-change-${Date.now()}`);

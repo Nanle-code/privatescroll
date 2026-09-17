@@ -41,6 +41,8 @@ Every item below has been exercised end-to-end against real compiled Compact cir
 | **Selective disclosure of identity** | Three separate circuits over the *same* underlying fact: register publicly, prove a match while disclosing only one boolean bit, or opt in to revealing your identity. |
 | **On-chain edit history** | Every save after the first also proves the specific content transition and binds it to the author — a real, queryable version chain. |
 | **Proof-gated sharing** | Only a document's on-chain-verified author can authorize sharing it — enforced in-circuit, not just by application code. |
+| **Proof-gated re-sharing** | A `Full`-access recipient can share the document further, without being its author — but only if their own grant genuinely exists on-chain, is unrevoked, and is at `Full` level; `Read`/`ReadVerify` holders get a real circuit rejection, not a hidden button. |
+| **Public proof verification** | A standalone `/verify` page reads the relayer's public ledger state directly — no login, no wallet, no secret key — so anyone can independently check whether a document's authorship is registered, a specific save's work-history proof was recorded, or a share is still active, instead of taking the app's word for it. |
 | **End-to-end encrypted sharing** | The document's AES key is wrapped with ECDH specifically for one recipient's public key; only their matching private key (generated locally, non-extractable) can recover it. |
 | **Real wallet integration** | Connects to any Midnight DApp Connector-compatible wallet (1AM, Lace) via the official `@midnight-ntwrk/dapp-connector-api`, using the actual shielded address as identity. |
 | **Works without a wallet too** | A local dev-identity fallback keeps every proof/save/share flow fully testable with zero setup. |
@@ -51,9 +53,10 @@ Every item below has been exercised end-to-end against real compiled Compact cir
 This project tells you what's real and what isn't, rather than papering over gaps:
 
 - **No live Midnight node/indexer/proof-server.** This environment has no Docker, so proof generation runs through `@midnight-ntwrk/compact-runtime`'s in-process simulator — every assert and ledger mutation is genuine circuit execution, but no proof has been submitted to an actual chain.
-- **Access levels aren't differentiated in-circuit.** `Read` / `ReadVerify` / `Full` are stored and checked for existence, but nothing on-chain currently enforces what each level actually permits — that's left to application logic, which doesn't differentiate them yet either.
+- **`Read` and `ReadVerify` still don't differ from each other.** `Full` now unlocks a real, in-circuit-enforced capability (re-sharing — see `authorizeSubShare`), but `Read` and `ReadVerify` grant identical capability today. Checking a proof is inherently public ledger data anyone can already read (see `/verify`), so there's no obvious extra capability left to gate specifically behind `ReadVerify`.
 - **No "list my shares" view.** Loading a shared document requires pasting the share id someone sent you.
 - **A share, once created, can't be re-keyed** if a recipient loses their local ECDH private key — there's no recovery path yet.
+- **Revoking a share doesn't cascade to its sub-shares.** If Alice shares Full access with Bob and Bob re-shares with Carol, revoking Bob's share doesn't revoke Carol's — each grant is independently revocable, but there's no tracked parent/child relationship between them yet.
 
 ## Vision & roadmap
 
@@ -65,8 +68,8 @@ This project tells you what's real and what isn't, rather than papering over gap
 
 **Realistic next steps**, roughly in the order they'd get built:
 1. Connect to a real Midnight testnet node, indexer, and proof server — proof generation currently runs through `@midnight-ntwrk/compact-runtime`'s in-process simulator for fast local iteration.
-2. Differentiate `AccessLevel` in-circuit — `Read` / `ReadVerify` / `Full` currently only differ by label, not by enforced capability.
-3. A "list my shares" view backed by an indexer query, replacing manually pasted share ids.
+2. A "list my shares" view backed by an indexer query, replacing manually pasted share ids.
+3. Cascading revocation for re-shares, so revoking a `Full`-access grant also revokes whatever it was used to re-share.
 4. Recipient key recovery, so losing a local ECDH keypair doesn't mean losing access to everything ever shared with you.
 
 ## Architecture

@@ -464,6 +464,60 @@ export async function shareDocument(
 }
 
 /**
+ * Full-access recipient side: re-shares a document that was itself shared
+ * with this browser, without needing to be the original author. Enforced
+ * on-chain: authorizeSubShare rejects this unless existingShareId resolves
+ * to a non-revoked grant, held by this caller, at Full access, for this
+ * exact document — Read/ReadVerify recipients get a real assert failure
+ * here, not just a hidden UI option. sharedResult must be the already
+ * loaded-and-decrypted result for existingShareId (from getSharedDocument),
+ * since recovering this browser's own copy of the document's AES key
+ * requires unwrapping it the same way viewing the document already does.
+ */
+export async function reshareSharedDocument(
+  existingShareId: string,
+  sharedResult: SharedDocumentResult,
+  userAddress: string,
+  recipientSharingCode: string,
+  accessLevel: AccessLevel,
+): Promise<{ shareId: string } | null> {
+  const { document, wrappedKey: existingWrappedKey, senderEncryptionPublicKey: existingSenderKey } = sharedResult
+  if (!document.documentHash || !existingWrappedKey || !existingSenderKey) {
+    error('Re-share document', new Error('This share is missing the data needed to re-share it'))
+    return null
+  }
+  try {
+    const { keyHash: recipientKeyHash, encryptionPublicKey: recipientPublicKey } = parseSharingCode(recipientSharingCode)
+    const { shareId } = await relayerRequest('/authorship/share/authorize-sub', 'POST', {
+      secretKey: getUserSecretKey(),
+      existingShareId,
+      recipientKeyHash,
+      accessLevel,
+      nonce: randomHex32(),
+    })
+    const documentEncryptionKey = await unwrapKeyFromSender(existingWrappedKey, existingSenderKey)
+    const wrappedKey = await wrapKeyForRecipient(documentEncryptionKey, recipientPublicKey)
+    const senderEncryptionPublicKey = await getEncryptionPublicKey()
+    await client.post('/document/share/authorize', {
+      documentId: document._id,
+      documentHash: document.documentHash,
+      shareId,
+      senderAddress: userAddress,
+      recipientKeyHash,
+      accessLevel,
+      wrappedKey,
+      senderEncryptionPublicKey,
+    })
+    success('Re-share document')
+    return { shareId }
+  } catch (err) {
+    console.error(err)
+    error('Re-share document', err)
+    return null
+  }
+}
+
+/**
  * Recipient side of shareDocument: proves this browser holds the secret key
  * the share was granted to, without revealing it, and that the grant is
  * still active. Returns the granted access level, or null if the share

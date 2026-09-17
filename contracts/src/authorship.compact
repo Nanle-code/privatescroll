@@ -169,6 +169,50 @@ export circuit authorizeDocumentShare(
   return disclosedShareId;
 }
 
+// Lets a Full-access recipient re-share the document further, without
+// needing to be the document's original author. existingShareId proves
+// the caller's own standing: it must resolve to a non-revoked grant,
+// held by the caller, at Full access, for this exact document — a claim
+// of "I have Full access" isn't enough, the grant has to actually exist
+// on-chain and belong to the caller. The new sub-share's senderKeyHash is
+// the re-sharer (not the original author), so revokeDocumentShare's
+// existing "only the sharing author may revoke this share" check already
+// lets the re-sharer revoke shares they created this way, with no extra
+// code. Read and ReadVerify holders get a real assert failure here, not
+// just a UI that happens to hide the option — this is the one place
+// AccessLevel is actually enforced in-circuit rather than just labeled.
+export circuit authorizeSubShare(
+  existingShareId: Bytes<32>,
+  recipientKeyHash: Bytes<32>,
+  accessLevel: AccessLevel,
+  nonce: Bytes<32>,
+): Bytes<32> {
+  const disclosedExistingShareId = disclose(existingShareId);
+  const disclosedRecipientKeyHash = disclose(recipientKeyHash);
+  const sender = disclose(callerKeyHash());
+
+  assert(shares.member(disclosedExistingShareId), "existing share does not exist");
+  const existingGrant = shares.lookup(disclosedExistingShareId);
+  assert(!existingGrant.revoked, "existing share has been revoked");
+  assert(existingGrant.recipientKeyHash == sender, "caller does not hold the existing share");
+  assert(existingGrant.accessLevel == AccessLevel.Full, "only Full access holders may re-share");
+
+  const documentHash = existingGrant.documentHash;
+  const shareId = persistentHash<Vector<3, Bytes<32>>>([documentHash, disclosedRecipientKeyHash, nonce]);
+  const disclosedShareId = disclose(shareId);
+  assert(!shares.member(disclosedShareId), "share already exists for this document, recipient, and nonce");
+
+  const grant = ShareGrant {
+    senderKeyHash: sender,
+    documentHash: documentHash,
+    recipientKeyHash: disclosedRecipientKeyHash,
+    accessLevel: disclose(accessLevel),
+    revoked: false,
+  };
+  shares.insert(disclosedShareId, grant);
+  return disclosedShareId;
+}
+
 // Sender revokes a previously authorized share.
 export circuit revokeDocumentShare(shareId: Bytes<32>): [] {
   const key = disclose(shareId);

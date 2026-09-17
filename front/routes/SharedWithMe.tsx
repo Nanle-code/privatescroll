@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { decryptSharedContent, SharedDocumentResult, getSharedDocument } from '../services/midnight'
+import { AccessLevel, decryptSharedContent, SharedDocumentResult, getSharedDocument, reshareSharedDocument } from '../services/midnight'
 import type { AppOutletContext } from '../App'
 
 /**
@@ -27,10 +27,16 @@ export default function SharedWithMe() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  const [subRecipientCode, setSubRecipientCode] = useState('')
+  const [subAccessLevel, setSubAccessLevel] = useState<AccessLevel>('read')
+  const [resharing, setResharing] = useState(false)
+  const [reshareResult, setReshareResult] = useState<string | null>(null)
+
   const handleLoad = async () => {
     if (!userAddress || !shareId) return
     setResult(null)
     setPlaintext(null)
+    setReshareResult(null)
     if (looksLikeSharingCode(shareId)) {
       setLoadError(
         "That's your own sharing code (what you give to others), not a share id (what you get back after someone shares a document with you). Paste the share id instead.",
@@ -43,6 +49,14 @@ export default function SharedWithMe() {
     setResult(loaded)
     setPlaintext(loaded ? await decryptSharedContent(loaded) : null)
     setLoading(false)
+  }
+
+  const handleReshare = async () => {
+    if (!userAddress || !result || !subRecipientCode) return
+    setResharing(true)
+    const shared = await reshareSharedDocument(shareId, result, userAddress, subRecipientCode, subAccessLevel)
+    setResharing(false)
+    if (shared) setReshareResult(shared.shareId)
   }
 
   return (
@@ -107,6 +121,52 @@ export default function SharedWithMe() {
                 </p>
                 <pre className="ciphertext">{result.document.content}</pre>
               </>
+            )}
+
+            {plaintext !== null && result.accessLevel === 'full' && (
+              <motion.section
+                className="share-panel"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.1 }}
+              >
+                <h2>Share this further</h2>
+                <p>
+                  Your access level lets you re-share this document — enforced on-chain, not just by this button
+                  existing.
+                </p>
+                <input
+                  placeholder="Recipient's sharing code"
+                  value={subRecipientCode}
+                  onChange={(e) => setSubRecipientCode(e.target.value)}
+                />
+                <select value={subAccessLevel} onChange={(e) => setSubAccessLevel(e.target.value as AccessLevel)}>
+                  <option value="read">Read</option>
+                  <option value="read_verify">Read + verify</option>
+                  <option value="full">Full</option>
+                </select>
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.96 }}
+                  onClick={handleReshare}
+                  disabled={resharing || !subRecipientCode}
+                >
+                  {resharing ? 'Sharing…' : 'Share'}
+                </motion.button>
+                <AnimatePresence>
+                  {reshareResult && (
+                    <motion.p
+                      className="share-result"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                    >
+                      Share created — send this id to the recipient: <code>{reshareResult}</code>
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+              </motion.section>
             )}
           </motion.div>
         )}
