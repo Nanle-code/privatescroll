@@ -118,3 +118,47 @@ export const markDocumentShareRevoked = async (shareId: string) => {
   const collection = db.collection<DocumentShareModel>("document_shares");
   await collection.updateOne({ shareId }, { $set: { status: "revoked" } });
 };
+
+export interface SharedWithMeEntry {
+  shareId: string;
+  documentTitle: string;
+  accessLevel: DocumentShareModel["accessLevel"];
+  senderAddress: string;
+  createdAt: Date;
+}
+
+/**
+ * MongoDB-side convenience index for "what's been shared with me" — the
+ * same pattern getUserDocuments already uses for "My Documents" (fast,
+ * queryable, but not itself the source of truth). The actual access
+ * verification a recipient relies on still happens for real, per share,
+ * against the relayer's on-chain ledger when they open one from this list
+ * (see verifySharedAccess in front/services/midnight.ts) — this only
+ * saves them from needing to already have a shareId in hand to discover
+ * that a share exists at all.
+ */
+export const getSharesForRecipient = async (recipientKeyHash: string): Promise<SharedWithMeEntry[]> => {
+  const { db } = await connectToDatabase();
+  const shares = await db
+    .collection<DocumentShareModel>("document_shares")
+    .find({ recipientKeyHash, status: "active" })
+    .sort({ createdAt: -1 })
+    .toArray();
+  if (shares.length === 0) return [];
+
+  const documentIds = shares.map((share) => share.documentId);
+  const documents = await db
+    .collection<DocumentModel>("documents")
+    .find({ _id: { $in: documentIds } })
+    .project({ documentTitle: 1 })
+    .toArray();
+  const titleById = new Map(documents.map((doc) => [doc._id!.toString(), doc.documentTitle]));
+
+  return shares.map((share) => ({
+    shareId: share.shareId,
+    documentTitle: titleById.get(share.documentId.toString()) ?? "Untitled",
+    accessLevel: share.accessLevel,
+    senderAddress: share.senderAddress,
+    createdAt: share.createdAt,
+  }));
+};

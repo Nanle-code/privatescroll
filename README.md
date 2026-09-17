@@ -47,6 +47,7 @@ Every item below has been exercised end-to-end against real compiled Compact cir
 | **Real wallet integration** | Connects to any Midnight DApp Connector-compatible wallet (1AM, Lace) via the official `@midnight-ntwrk/dapp-connector-api`, using the actual shielded address as identity. |
 | **Works without a wallet too** | A local dev-identity fallback keeps every proof/save/share flow fully testable with zero setup. |
 | **Deployable without trusting the relayer** | The relayer is stateless by design — every circuit call carries the caller's secret key for that one request only; it's never generated or persisted server-side, so a shared, publicly-reachable deployment never becomes a store of everyone's private keys. |
+| **A real "Shared With Me" list** | Discovers what's been shared with you automatically — no more copy-pasting a share id someone sent you out of band. Discovery only: opening one still runs the real on-chain access check before showing any content. |
 
 ## What's honestly not solved yet
 
@@ -54,7 +55,6 @@ This project tells you what's real and what isn't, rather than papering over gap
 
 - **No live Midnight node/indexer/proof-server.** This environment has no Docker, so proof generation runs through `@midnight-ntwrk/compact-runtime`'s in-process simulator — every assert and ledger mutation is genuine circuit execution, but no proof has been submitted to an actual chain.
 - **`Read` and `ReadVerify` still don't differ from each other.** `Full` now unlocks a real, in-circuit-enforced capability (re-sharing — see `authorizeSubShare`), but `Read` and `ReadVerify` grant identical capability today. Checking a proof is inherently public ledger data anyone can already read (see `/verify`), so there's no obvious extra capability left to gate specifically behind `ReadVerify`.
-- **No "list my shares" view.** Loading a shared document requires pasting the share id someone sent you.
 - **A share, once created, can't be re-keyed** if a recipient loses their local ECDH private key — there's no recovery path yet.
 - **Revoking a share doesn't cascade to its sub-shares.** If Alice shares Full access with Bob and Bob re-shares with Carol, revoking Bob's share doesn't revoke Carol's — each grant is independently revocable, but there's no tracked parent/child relationship between them yet.
 
@@ -67,10 +67,9 @@ This project tells you what's real and what isn't, rather than papering over gap
 **Adoption path.** The pieces here are useful independently of the full editor: `authorship.compact`'s pattern (pseudonymous identity + selective disclosure) generalizes to any product that needs "prove you did X, choose whether to say who did it" — a plugin/library extraction is a natural next step once the core is battle-tested.
 
 **Realistic next steps**, roughly in the order they'd get built:
-1. Connect to a real Midnight testnet node, indexer, and proof server — proof generation currently runs through `@midnight-ntwrk/compact-runtime`'s in-process simulator for fast local iteration.
-2. A "list my shares" view backed by an indexer query, replacing manually pasted share ids.
-3. Cascading revocation for re-shares, so revoking a `Full`-access grant also revokes whatever it was used to re-share.
-4. Recipient key recovery, so losing a local ECDH keypair doesn't mean losing access to everything ever shared with you.
+1. Connect to a real Midnight testnet node, indexer, and proof server — proof generation currently runs through `@midnight-ntwrk/compact-runtime`'s in-process simulator for fast local iteration. The "Shared With Me" list is a MongoDB-backed stand-in for what an indexer would eventually serve.
+2. Cascading revocation for re-shares, so revoking a `Full`-access grant also revokes whatever it was used to re-share.
+3. Recipient key recovery, so losing a local ECDH keypair doesn't mean losing access to everything ever shared with you.
 
 ## Architecture
 

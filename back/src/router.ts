@@ -6,6 +6,7 @@ import {
   getDocumentById,
   getDocumentByIdAndOwner,
   getDocumentShareByShareId,
+  getSharesForRecipient,
   getUserDocuments,
   markDocumentShareRevoked,
 } from "./controller";
@@ -51,6 +52,19 @@ router.post("/documents", async (req, res) => {
     }
     const documents = await getUserDocuments(userAddress, limit, skip);
     return res.json({ message: { documents } });
+  } catch (error) {
+    return respondToError(res, error);
+  }
+});
+
+router.get("/document/shares/mine", async (req, res) => {
+  try {
+    const { recipientKeyHash } = req.query as { recipientKeyHash?: string };
+    if (!recipientKeyHash) {
+      return res.status(400).json({ message: "Missing recipientKeyHash query parameter" });
+    }
+    const shares = await getSharesForRecipient(recipientKeyHash);
+    return res.json({ message: { shares } });
   } catch (error) {
     return respondToError(res, error);
   }

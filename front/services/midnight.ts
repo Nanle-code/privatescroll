@@ -637,6 +637,35 @@ export interface SharedDocumentResult {
   senderEncryptionPublicKey?: string
 }
 
+export interface SharedWithMeEntry {
+  shareId: string
+  documentTitle: string
+  accessLevel: AccessLevel
+  senderAddress: string
+  createdAt: string
+}
+
+/**
+ * Discovers what's been shared with this browser, without needing an
+ * already-known share id — a MongoDB-side convenience index (the same
+ * pattern listDocuments already uses for "My Documents"), keyed by this
+ * browser's own author key hash. This is discovery only: it doesn't grant
+ * or verify anything by itself. Actually opening one of these still goes
+ * through getSharedDocument, which runs the real on-chain access check
+ * before showing any content.
+ */
+export async function listMySharedDocuments(): Promise<SharedWithMeEntry[]> {
+  try {
+    const recipientKeyHash = await getAuthorKeyHash()
+    if (!recipientKeyHash) return []
+    const response = await client.get(`/document/shares/mine?recipientKeyHash=${encodeURIComponent(recipientKeyHash)}`)
+    return response.message.shares
+  } catch (err) {
+    console.error(err)
+    return []
+  }
+}
+
 /**
  * Loads a shared document, gated on a real ZK proof of recipient access run
  * right here in the browser (verifySharedAccess) — not on anything the

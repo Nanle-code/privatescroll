@@ -1,8 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AccessLevel, decryptSharedContent, SharedDocumentResult, getSharedDocument, reshareSharedDocument } from '../services/midnight'
+import {
+  AccessLevel,
+  SharedWithMeEntry,
+  decryptSharedContent,
+  SharedDocumentResult,
+  getSharedDocument,
+  listMySharedDocuments,
+  reshareSharedDocument,
+} from '../services/midnight'
 import type { AppOutletContext } from '../App'
+
+const listVariants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.06 } },
+}
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 10 },
+  show: { opacity: 1, y: 0 },
+}
 
 /**
  * Sharing codes and share ids are both opaque strings, easy to paste into
@@ -32,12 +50,26 @@ export default function SharedWithMe() {
   const [resharing, setResharing] = useState(false)
   const [reshareResult, setReshareResult] = useState<string | null>(null)
 
-  const handleLoad = async () => {
-    if (!userAddress || !shareId) return
+  const [shares, setShares] = useState<SharedWithMeEntry[]>([])
+  const [sharesLoading, setSharesLoading] = useState(false)
+
+  useEffect(() => {
+    if (!userAddress) return
+    setSharesLoading(true)
+    listMySharedDocuments().then((list) => {
+      setShares(list)
+      setSharesLoading(false)
+    })
+  }, [userAddress])
+
+  const handleLoad = async (overrideShareId?: string) => {
+    const targetShareId = overrideShareId ?? shareId
+    if (!userAddress || !targetShareId) return
+    setShareId(targetShareId)
     setResult(null)
     setPlaintext(null)
     setReshareResult(null)
-    if (looksLikeSharingCode(shareId)) {
+    if (looksLikeSharingCode(targetShareId)) {
       setLoadError(
         "That's your own sharing code (what you give to others), not a share id (what you get back after someone shares a document with you). Paste the share id instead.",
       )
@@ -45,7 +77,7 @@ export default function SharedWithMe() {
     }
     setLoadError(null)
     setLoading(true)
-    const loaded = await getSharedDocument(shareId)
+    const loaded = await getSharedDocument(targetShareId)
     setResult(loaded)
     setPlaintext(loaded ? await decryptSharedContent(loaded) : null)
     setLoading(false)
@@ -62,13 +94,37 @@ export default function SharedWithMe() {
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: 'easeOut' }}>
       <h1>Shared With Me</h1>
-      <p>
-        There's no "list my shares" view yet — paste a share id someone sent you (the sender gets it back from the
-        Share panel on their document, after they've used your sharing code there).
-      </p>
+      <p>Documents shared with you appear below automatically, or paste a share id directly if you have one.</p>
+
+      {sharesLoading && <p>Loading…</p>}
+      {!sharesLoading && shares.length === 0 && (
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+          Nothing shared with you yet.
+        </motion.p>
+      )}
+
+      <motion.ul className="document-list" variants={listVariants} initial="hidden" animate="show">
+        <AnimatePresence>
+          {shares.map((share) => (
+            <motion.li key={share.shareId} layout variants={itemVariants} exit={{ opacity: 0, y: -10 }}>
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault()
+                  handleLoad(share.shareId)
+                }}
+              >
+                {share.documentTitle}
+              </a>
+              <span className="badge badge-dev">{share.accessLevel.replace('_', ' ')}</span>
+            </motion.li>
+          ))}
+        </AnimatePresence>
+      </motion.ul>
+
       <div className="share-load">
         <input placeholder="Share id" value={shareId} onChange={(e) => setShareId(e.target.value)} />
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={handleLoad} disabled={loading || !shareId}>
+        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={() => handleLoad()} disabled={loading || !shareId}>
           {loading ? 'Loading…' : 'Load'}
         </motion.button>
       </div>
