@@ -1,0 +1,154 @@
+.verify-page {
+  min-height: 100vh;
+}
+
+.verify-content {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 48px 20px 100px;
+}
+
+.verify-content h1 {
+  font-size: clamp(1.8rem, 5vw, 2.4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 8px 0 14px;
+}
+
+.verify-intro {
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.65;
+  max-width: 560px;
+}
+
+.verify-activity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 28px 0 40px;
+}
+
+.verify-activity div {
+  flex: 1;
+  min-width: 110px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  text-align: center;
+}
+
+.verify-activity strong {
+  display: block;
+  font-size: 1.3rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.verify-activity span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.verify-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.verify-panel h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.verify-panel p {
+  font-size: 0.86rem;
+  margin: 0 0 16px;
+}
+
+.verify-form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.verify-form input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.verify-form-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.verify-form-stacked input {
+  width: 100%;
+}
+
+.verify-result {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.verify-result code {
+  font-family: var(--font-mono);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.verify-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.verify-badge-yes {
+  color: var(--live);
+  background: var(--live-bg);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.25) inset;
+}
+
+.verify-badge-no {
+  color: var(--fail);
+  background: var(--fail-bg);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.25) inset;
+}
+
+.verify-access-level {
+  font-size: 0.76rem;
+  color: var(--accent-2);
+  text-transform: capitalize;
+  font-weight: 600;
+}
+
+@media (max-width: 480px) {
+  .verify-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

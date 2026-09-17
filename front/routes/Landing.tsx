@@ -51,6 +51,7 @@ const features = [
   'Real wallet integration',
   'Works without a wallet too',
   'Stateless relayer — secrets never leave your browser',
+  'Public proof verification — check any claim yourself, no login needed',
 ]
 
 export default function Landing() {
@@ -61,9 +62,14 @@ export default function Landing() {
 
       <header className="landing-topbar">
         <span className="landing-brand">PrivateScroll</span>
-        <Link to="/app" className="landing-topbar-link">
-          Launch app →
-        </Link>
+        <div className="landing-topbar-links">
+          <Link to="/verify" className="landing-topbar-link">
+            Verify a claim
+          </Link>
+          <Link to="/app" className="landing-topbar-link">
+            Launch app →
+          </Link>
+        </div>
       </header>
 
       <section className="landing-hero">

@@ -666,3 +666,91 @@ export async function appendDocument(
     return null
   }
 }
+
+// --- public verification (no identity, no secret, no login) ---------------
+//
+// Every function below reads directly from the relayer's public ledger
+// state — the same data anyone running a real Midnight node could read
+// independently. None of it needs a secret key, a wallet, or even a
+// PrivateScroll account: this is "prove it, don't trust it" made literal —
+// a visitor can check these claims themselves without trusting this
+// frontend, the backend, or PrivateScroll's operator to report them
+// honestly.
+
+export interface AuthorshipStatus {
+  registered: boolean
+  author?: string
+}
+
+export async function verifyDocumentAuthorship(documentHash: string): Promise<AuthorshipStatus | null> {
+  try {
+    return (await relayerRequest(`/ledger/authorship/document/${encodeURIComponent(documentHash)}`, 'GET')) as AuthorshipStatus
+  } catch (err) {
+    console.error(err)
+    error('Verify document authorship', err)
+    return null
+  }
+}
+
+export interface WorkProofStatus {
+  recorded: boolean
+}
+
+export async function verifyWorkProof(documentHash: string, modifiedHash: string): Promise<WorkProofStatus | null> {
+  try {
+    const query = `documentHash=${encodeURIComponent(documentHash)}&modifiedHash=${encodeURIComponent(modifiedHash)}`
+    return (await relayerRequest(`/ledger/authorship/work-proof?${query}`, 'GET')) as WorkProofStatus
+  } catch (err) {
+    console.error(err)
+    error('Verify work-history proof', err)
+    return null
+  }
+}
+
+export type ShareStatus =
+  | { exists: false }
+  | {
+      exists: true
+      senderKeyHash: string
+      documentHash: string
+      recipientKeyHash: string
+      accessLevel: AccessLevel
+      revoked: boolean
+    }
+
+export async function verifyShareStatus(shareId: string): Promise<ShareStatus | null> {
+  try {
+    return (await relayerRequest(`/ledger/authorship/share/${encodeURIComponent(shareId)}`, 'GET')) as ShareStatus
+  } catch (err) {
+    console.error(err)
+    error('Verify share status', err)
+    return null
+  }
+}
+
+export interface LedgerActivity {
+  documentAuthorCount: string
+  workProofCount: string
+  shareCount: string
+  versionCount: string
+  nullifierCount: string
+}
+
+export async function getLedgerActivity(): Promise<LedgerActivity | null> {
+  try {
+    const [authorship, documentChange] = await Promise.all([
+      relayerRequest('/ledger/authorship', 'GET'),
+      relayerRequest('/ledger/document-change', 'GET'),
+    ])
+    return {
+      documentAuthorCount: authorship.documentAuthorCount,
+      workProofCount: authorship.workProofCount,
+      shareCount: authorship.shareCount,
+      versionCount: documentChange.versionCount,
+      nullifierCount: documentChange.nullifierCount,
+    }
+  } catch (err) {
+    console.error(err)
+    return null
+  }
+}

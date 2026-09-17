@@ -6,6 +6,7 @@ import 'react-toastify/dist/ReactToastify.css'
 import './App.css'
 import App from './App'
 import Landing from './routes/Landing'
+import Verify from './routes/Verify'
 import Home from './routes/Home'
 import DocumentEditor from './routes/DocumentEditor'
 import SharedWithMe from './routes/SharedWithMe'
@@ -21,6 +22,7 @@ function RedirectToDocument() {
 
 const router = createBrowserRouter([
   { path: '/', element: <Landing /> },
+  { path: '/verify', element: <Verify /> },
   { path: '/shared', element: <Navigate to="/app/shared" replace /> },
   { path: '/document/:documentId', element: <RedirectToDocument /> },
   {

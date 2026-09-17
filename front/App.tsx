@@ -40,6 +40,7 @@ export default function App() {
         <nav>
           <Link to="/app">My Documents</Link>
           <Link to="/app/shared">Shared With Me</Link>
+          <Link to="/verify">Verify</Link>
         </nav>
       </motion.header>
 
