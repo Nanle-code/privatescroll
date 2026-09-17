@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AuthorshipStatus,
@@ -25,6 +25,10 @@ const fadeUp = {
 
 export default function Verify() {
   const [activity, setActivity] = useState<LedgerActivity | null>(null)
+  const [searchParams] = useSearchParams()
+  const linkedDocumentHash = searchParams.get('documentHash') ?? ''
+  const linkedModifiedHash = searchParams.get('modifiedHash') ?? ''
+  const linkedShareId = searchParams.get('shareId') ?? ''
 
   useEffect(() => {
     getLedgerActivity().then(setActivity)
@@ -87,9 +91,9 @@ export default function Verify() {
           )}
         </AnimatePresence>
 
-        <DocumentAuthorshipPanel />
-        <WorkProofPanel />
-        <ShareStatusPanel />
+        <DocumentAuthorshipPanel initialDocumentHash={linkedDocumentHash} />
+        <WorkProofPanel initialDocumentHash={linkedDocumentHash} initialModifiedHash={linkedModifiedHash} />
+        <ShareStatusPanel initialShareId={linkedShareId} />
       </div>
     </div>
   )
@@ -99,19 +103,25 @@ function ResultBadge({ ok, children }: { ok: boolean; children: React.ReactNode 
   return <span className={ok ? 'verify-badge verify-badge-yes' : 'verify-badge verify-badge-no'}>{children}</span>
 }
 
-function DocumentAuthorshipPanel() {
-  const [documentHash, setDocumentHash] = useState('')
+function DocumentAuthorshipPanel({ initialDocumentHash = '' }: { initialDocumentHash?: string }) {
+  const [documentHash, setDocumentHash] = useState(initialDocumentHash)
   const [result, setResult] = useState<AuthorshipStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [checked, setChecked] = useState(false)
 
-  const handleCheck = async () => {
-    if (!documentHash.trim()) return
+  const handleCheck = async (hashOverride?: string) => {
+    const target = (hashOverride ?? documentHash).trim()
+    if (!target) return
     setChecking(true)
-    setResult(await verifyDocumentAuthorship(documentHash.trim()))
+    setResult(await verifyDocumentAuthorship(target))
     setChecked(true)
     setChecking(false)
   }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (initialDocumentHash) handleCheck(initialDocumentHash)
+  }, [])
 
   return (
     <motion.section className="verify-panel" initial="hidden" whileInView="show" viewport={{ once: true, margin: '-60px' }} variants={fadeUp} transition={{ duration: 0.4 }}>
@@ -124,7 +134,7 @@ function DocumentAuthorshipPanel() {
           onChange={(e) => setDocumentHash(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleCheck()}
         />
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={handleCheck} disabled={checking || !documentHash.trim()}>
+        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={() => handleCheck()} disabled={checking || !documentHash.trim()}>
           {checking ? 'Checking…' : 'Check'}
         </motion.button>
       </div>
@@ -142,20 +152,35 @@ function DocumentAuthorshipPanel() {
   )
 }
 
-function WorkProofPanel() {
-  const [documentHash, setDocumentHash] = useState('')
-  const [modifiedHash, setModifiedHash] = useState('')
+function WorkProofPanel({
+  initialDocumentHash = '',
+  initialModifiedHash = '',
+}: {
+  initialDocumentHash?: string
+  initialModifiedHash?: string
+}) {
+  const [documentHash, setDocumentHash] = useState(initialDocumentHash)
+  const [modifiedHash, setModifiedHash] = useState(initialModifiedHash)
   const [result, setResult] = useState<WorkProofStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [checked, setChecked] = useState(false)
 
-  const handleCheck = async () => {
-    if (!documentHash.trim() || !modifiedHash.trim()) return
+  const handleCheck = async (override?: { documentHash: string; modifiedHash: string }) => {
+    const doc = (override?.documentHash ?? documentHash).trim()
+    const mod = (override?.modifiedHash ?? modifiedHash).trim()
+    if (!doc || !mod) return
     setChecking(true)
-    setResult(await verifyWorkProof(documentHash.trim(), modifiedHash.trim()))
+    setResult(await verifyWorkProof(doc, mod))
     setChecked(true)
     setChecking(false)
   }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (initialDocumentHash && initialModifiedHash) {
+      handleCheck({ documentHash: initialDocumentHash, modifiedHash: initialModifiedHash })
+    }
+  }, [])
 
   return (
     <motion.section className="verify-panel" initial="hidden" whileInView="show" viewport={{ once: true, margin: '-60px' }} variants={fadeUp} transition={{ duration: 0.4 }}>
@@ -167,7 +192,7 @@ function WorkProofPanel() {
         <motion.button
           whileHover={{ scale: 1.03 }}
           whileTap={{ scale: 0.96 }}
-          onClick={handleCheck}
+          onClick={() => handleCheck()}
           disabled={checking || !documentHash.trim() || !modifiedHash.trim()}
         >
           {checking ? 'Checking…' : 'Check'}
@@ -184,19 +209,25 @@ function WorkProofPanel() {
   )
 }
 
-function ShareStatusPanel() {
-  const [shareId, setShareId] = useState('')
+function ShareStatusPanel({ initialShareId = '' }: { initialShareId?: string }) {
+  const [shareId, setShareId] = useState(initialShareId)
   const [result, setResult] = useState<ShareStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [checked, setChecked] = useState(false)
 
-  const handleCheck = async () => {
-    if (!shareId.trim()) return
+  const handleCheck = async (override?: string) => {
+    const target = (override ?? shareId).trim()
+    if (!target) return
     setChecking(true)
-    setResult(await verifyShareStatus(shareId.trim()))
+    setResult(await verifyShareStatus(target))
     setChecked(true)
     setChecking(false)
   }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (initialShareId) handleCheck(initialShareId)
+  }, [])
 
   return (
     <motion.section className="verify-panel" initial="hidden" whileInView="show" viewport={{ once: true, margin: '-60px' }} variants={fadeUp} transition={{ duration: 0.4 }}>
@@ -209,7 +240,7 @@ function ShareStatusPanel() {
           onChange={(e) => setShareId(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleCheck()}
         />
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={handleCheck} disabled={checking || !shareId.trim()}>
+        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }} onClick={() => handleCheck()} disabled={checking || !shareId.trim()}>
           {checking ? 'Checking…' : 'Check'}
         </motion.button>
       </div>

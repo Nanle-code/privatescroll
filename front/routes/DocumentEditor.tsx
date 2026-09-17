@@ -13,6 +13,7 @@ import {
   sha256Hex,
   shareDocument,
 } from '../services/midnight'
+import ProvenanceTimeline from '../components/ProvenanceTimeline'
 import type { AppOutletContext } from '../App'
 
 export default function DocumentEditor() {
@@ -153,25 +154,9 @@ export default function DocumentEditor() {
         </span>
       </div>
 
-      <AnimatePresence>
-        {record.midnight_proofs?.length > 0 && (
-          <motion.details
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-          >
-            <summary>{record.midnight_proofs.length} on-chain proof(s) recorded</summary>
-            <ul>
-              {record.midnight_proofs.map((proof, index) => (
-                <li key={index}>
-                  <code>{proof.modifiedHash.slice(0, 16)}…</code> at {new Date(proof.verifiedAt).toLocaleString()}
-                </li>
-              ))}
-            </ul>
-          </motion.details>
-        )}
-      </AnimatePresence>
+      {documentHash && record.midnight_proofs?.length > 0 && (
+        <ProvenanceTimeline documentHash={documentHash} proofs={record.midnight_proofs} />
+      )}
 
       <motion.section
         className="share-panel"
